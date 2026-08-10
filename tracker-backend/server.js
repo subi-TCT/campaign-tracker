@@ -12,18 +12,30 @@ app.use(cors({
 }));
 app.use(express.json());
 
-const dbDir = process.env.DATABASE_DIR || __dirname;
+const fs = require('fs');
+let dbDir = process.env.DATABASE_DIR || __dirname;
+
+// Test write access to dbDir, fallback to __dirname if not writable
+try {
+  fs.mkdirSync(dbDir, { recursive: true });
+  const testFile = path.join(dbDir, '.write-test');
+  fs.writeFileSync(testFile, 'test');
+  fs.unlinkSync(testFile);
+} catch (e) {
+  console.warn(`WARNING: Database directory "${dbDir}" is not writable. Falling back to local directory.`);
+  dbDir = __dirname;
+}
+
 const dbPath = path.join(dbDir, 'database.sqlite');
 
 // Auto-initialize DB if it doesn't exist (e.g. fresh Railway Persistent Volume)
-const fs = require('fs');
 if (!fs.existsSync(dbPath)) {
   console.log('SQLite database file not found. Auto-initializing database...');
   try {
-    let jsonPath = path.join(__dirname, '../contacts_data.json');
+    let jsonPath = path.join(__dirname, 'contacts_data.json');
     if (!fs.existsSync(jsonPath)) {
       const fallbacks = [
-        path.join(__dirname, 'contacts_data.json'),
+        path.join(__dirname, '../contacts_data.json'),
         '/app/contacts_data.json'
       ];
       for (const p of fallbacks) {

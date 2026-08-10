@@ -4,7 +4,10 @@ const path = require('path');
 
 const dbDir = process.env.DATABASE_DIR || __dirname;
 const dbPath = path.join(dbDir, 'database.sqlite');
-const jsonPath = path.join(__dirname, '../contacts_data.json');
+let jsonPath = path.join(__dirname, 'contacts_data.json');
+if (!fs.existsSync(jsonPath)) {
+  jsonPath = path.join(__dirname, '../contacts_data.json');
+}
 
 // Check if JSON data file exists
 if (!fs.existsSync(jsonPath)) {

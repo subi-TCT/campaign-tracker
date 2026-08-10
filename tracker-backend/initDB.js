@@ -2,7 +2,8 @@ const sqlite3 = require('sqlite3').verbose();
 const fs = require('fs');
 const path = require('path');
 
-const dbPath = path.join(__dirname, 'database.sqlite');
+const dbDir = process.env.DATABASE_DIR || __dirname;
+const dbPath = path.join(dbDir, 'database.sqlite');
 const jsonPath = path.join(__dirname, '../contacts_data.json');
 
 // Check if JSON data file exists

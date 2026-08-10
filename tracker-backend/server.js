@@ -14,6 +14,20 @@ app.use(express.json());
 
 const dbDir = process.env.DATABASE_DIR || __dirname;
 const dbPath = path.join(dbDir, 'database.sqlite');
+
+// Auto-initialize DB if it doesn't exist (e.g. fresh Railway Persistent Volume)
+const fs = require('fs');
+if (!fs.existsSync(dbPath)) {
+  console.log('SQLite database file not found. Auto-initializing database...');
+  try {
+    const { execSync } = require('child_process');
+    execSync('node initDB.js', { cwd: __dirname, env: process.env, stdio: 'inherit' });
+    console.log('SQLite database initialized successfully.');
+  } catch (dbErr) {
+    console.error('Failed to auto-initialize SQLite database:', dbErr.message);
+  }
+}
+
 const db = new sqlite3.Database(dbPath, (err) => {
   if (err) {
     console.error('Error connecting to SQLite database:', err.message);

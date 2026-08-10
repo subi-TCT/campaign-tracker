@@ -20,9 +20,75 @@ const fs = require('fs');
 if (!fs.existsSync(dbPath)) {
   console.log('SQLite database file not found. Auto-initializing database...');
   try {
-    const { execSync } = require('child_process');
-    execSync('node initDB.js', { cwd: __dirname, env: process.env, stdio: 'inherit' });
-    console.log('SQLite database initialized successfully.');
+    let jsonPath = path.join(__dirname, '../contacts_data.json');
+    if (!fs.existsSync(jsonPath)) {
+      const fallbacks = [
+        path.join(__dirname, 'contacts_data.json'),
+        '/app/contacts_data.json'
+      ];
+      for (const p of fallbacks) {
+        if (fs.existsSync(p)) {
+          jsonPath = p;
+          break;
+        }
+      }
+    }
+
+    if (fs.existsSync(jsonPath)) {
+      const contacts = JSON.parse(fs.readFileSync(jsonPath, 'utf8'));
+      const initDb = new sqlite3.Database(dbPath);
+      initDb.serialize(() => {
+        initDb.run(`CREATE TABLE IF NOT EXISTS contacts (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          s_no INTEGER,
+          acc_code TEXT,
+          account_name TEXT,
+          mobile_number TEXT,
+          email_id TEXT,
+          email_status TEXT DEFAULT 'Pending',
+          email_sent_date TEXT DEFAULT '',
+          whatsapp_status TEXT DEFAULT 'Pending',
+          whatsapp_sent_date TEXT DEFAULT '',
+          call_status TEXT DEFAULT 'Not Called',
+          call_sent_date TEXT DEFAULT '',
+          notes TEXT DEFAULT '',
+          member_reaction TEXT DEFAULT 'Unknown',
+          exit_poll_status TEXT DEFAULT 'Pending'
+        )`);
+        
+        const stmt = initDb.prepare(`INSERT INTO contacts (
+          s_no, acc_code, account_name, mobile_number, email_id, 
+          email_status, email_sent_date, 
+          whatsapp_status, whatsapp_sent_date, 
+          call_status, call_sent_date, notes,
+          member_reaction, exit_poll_status
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+        
+        for (const contact of contacts) {
+          stmt.run(
+            contact.sNo || 0,
+            contact.accCode || '',
+            contact.name || '',
+            contact.mobile || '',
+            contact.email || '',
+            contact.emailStatus || 'Pending',
+            contact.emailSentDate || '',
+            contact.waStatus || 'Pending',
+            contact.waSentDate || '',
+            contact.callStatus || 'Not Called',
+            contact.callSentDate || '',
+            contact.callNotes || '',
+            'Unknown',
+            'Pending'
+          );
+        }
+        stmt.finalize();
+      });
+      initDb.close();
+      console.log(`SQLite database successfully initialized with ${contacts.length} records.`);
+    } else {
+      console.error('Error: contacts_data.json was not found in any search path.');
+    }
   } catch (dbErr) {
     console.error('Failed to auto-initialize SQLite database:', dbErr.message);
   }

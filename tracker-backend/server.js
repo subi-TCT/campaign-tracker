@@ -357,6 +357,7 @@ app.get('/api/stats', async (req, res) => {
         noResponse: 0,
         outOfCountry: 0,
         switchedOff: 0,
+        reminderRequest: 0,
         calledToday: callTodayRow.count
       },
       reactions: {
@@ -401,6 +402,7 @@ app.get('/api/stats', async (req, res) => {
       else if (status === 'no response') stats.call.noResponse = r.count;
       else if (status === 'out of country') stats.call.outOfCountry = r.count;
       else if (status === 'switched off') stats.call.switchedOff = r.count;
+      else if (status === 'reminder request') stats.call.reminderRequest = r.count;
     });
 
     reactionRows.forEach(r => {

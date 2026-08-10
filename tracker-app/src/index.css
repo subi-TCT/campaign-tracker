@@ -852,6 +852,16 @@ body.light-theme .status-badge.switched-off {
   background: rgba(71, 85, 105, 0.08);
 }
 
+.status-badge.reminder-request {
+  background: rgba(99, 102, 241, 0.1);
+  color: #818cf8;
+  border: 1px solid rgba(99, 102, 241, 0.2);
+}
+body.light-theme .status-badge.reminder-request {
+  color: #4f46e5;
+  background: rgba(79, 70, 229, 0.08);
+}
+
 /* Pagination */
 .pagination {
   display: flex;

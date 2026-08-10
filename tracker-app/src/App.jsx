@@ -1283,8 +1283,8 @@ export default function App() {
                 </div>
                 <div className="stat-card warning">
                   <div className="stat-header"><span>No Connect / Retry</span></div>
-                  <div className="stat-value">{(stats.call.busy || 0) + (stats.call.noAnswer || 0) + (stats.call.noResponse || 0) + (stats.call.switchedOff || 0)}</div>
-                  <div className="stat-desc">Busy, No Ans, Off, or No Response</div>
+                  <div className="stat-value">{(stats.call.busy || 0) + (stats.call.noAnswer || 0) + (stats.call.noResponse || 0) + (stats.call.switchedOff || 0) + (stats.call.reminderRequest || 0)}</div>
+                  <div className="stat-desc">Busy, No Ans, Off, No Response, or Reminders</div>
                 </div>
                 <div className="stat-card">
                   <div className="stat-header"><span>Uncalled Contacts</span></div>
@@ -1319,6 +1319,7 @@ export default function App() {
                     <option value="No Response">No Response</option>
                     <option value="Out of country">Out of country</option>
                     <option value="Switched off">Switched off</option>
+                    <option value="Reminder Request">Reminder Request</option>
                     <option value="Left Message">Left Message</option>
                     <option value="Failed">Failed / Declined</option>
                   </select>
@@ -1995,6 +1996,7 @@ export default function App() {
                   <option value="No Response">No Response</option>
                   <option value="Out of country">Out of country</option>
                   <option value="Switched off">Switched off</option>
+                  <option value="Reminder Request">Reminder Request</option>
                   <option value="Left Message">Left Message</option>
                   <option value="Failed">Failed / Declined</option>
                 </select>

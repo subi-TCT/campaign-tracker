@@ -6,13 +6,15 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "start": "sirv dist --port $PORT --single",
     "lint": "oxlint",
     "preview": "vite preview"
   },
   "dependencies": {
     "lucide-react": "^1.31.0",
     "react": "^19.2.8",
-    "react-dom": "^19.2.8"
+    "react-dom": "^19.2.8",
+    "sirv-cli": "^3.0.0"
   },
   "devDependencies": {
     "@types/react": "^19.2.17",

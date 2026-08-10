@@ -1282,9 +1282,9 @@ export default function App() {
                   <div className="stat-desc">Voters spoke & support confirmed</div>
                 </div>
                 <div className="stat-card warning">
-                  <div className="stat-header"><span>Busy / No Answer</span></div>
-                  <div className="stat-value">{stats.call.busy + stats.call.noAnswer}</div>
-                  <div className="stat-desc">Call back scheduled later</div>
+                  <div className="stat-header"><span>No Connect / Retry</span></div>
+                  <div className="stat-value">{(stats.call.busy || 0) + (stats.call.noAnswer || 0) + (stats.call.noResponse || 0) + (stats.call.switchedOff || 0)}</div>
+                  <div className="stat-desc">Busy, No Ans, Off, or No Response</div>
                 </div>
                 <div className="stat-card">
                   <div className="stat-header"><span>Uncalled Contacts</span></div>
@@ -1316,6 +1316,9 @@ export default function App() {
                     <option value="Connected">Connected (Supported)</option>
                     <option value="Busy">Busy</option>
                     <option value="No Answer">No Answer</option>
+                    <option value="No Response">No Response</option>
+                    <option value="Out of country">Out of country</option>
+                    <option value="Switched off">Switched off</option>
                     <option value="Left Message">Left Message</option>
                     <option value="Failed">Failed / Declined</option>
                   </select>
@@ -1989,6 +1992,9 @@ export default function App() {
                   <option value="Connected">Connected (Confirms Support)</option>
                   <option value="Busy">Busy (Call back later)</option>
                   <option value="No Answer">No Answer</option>
+                  <option value="No Response">No Response</option>
+                  <option value="Out of country">Out of country</option>
+                  <option value="Switched off">Switched off</option>
                   <option value="Left Message">Left Message</option>
                   <option value="Failed">Failed / Declined</option>
                 </select>

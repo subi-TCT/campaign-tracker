@@ -822,6 +822,36 @@ body.light-theme .status-badge.left-message {
   background: rgba(109, 40, 217, 0.08);
 }
 
+.status-badge.no-response {
+  background: rgba(249, 115, 22, 0.1);
+  color: #fb923c;
+  border: 1px solid rgba(249, 115, 22, 0.2);
+}
+body.light-theme .status-badge.no-response {
+  color: #c2410c;
+  background: rgba(194, 65, 12, 0.08);
+}
+
+.status-badge.out-of-country {
+  background: rgba(6, 182, 212, 0.1);
+  color: #22d3ee;
+  border: 1px solid rgba(6, 182, 212, 0.2);
+}
+body.light-theme .status-badge.out-of-country {
+  color: #0e7490;
+  background: rgba(14, 116, 144, 0.08);
+}
+
+.status-badge.switched-off {
+  background: rgba(100, 116, 139, 0.1);
+  color: #94a3b8;
+  border: 1px solid rgba(100, 116, 139, 0.2);
+}
+body.light-theme .status-badge.switched-off {
+  color: #475569;
+  background: rgba(71, 85, 105, 0.08);
+}
+
 /* Pagination */
 .pagination {
   display: flex;

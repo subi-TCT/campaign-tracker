@@ -354,6 +354,9 @@ app.get('/api/stats', async (req, res) => {
         noAnswer: 0,
         leftMessage: 0,
         failed: 0,
+        noResponse: 0,
+        outOfCountry: 0,
+        switchedOff: 0,
         calledToday: callTodayRow.count
       },
       reactions: {
@@ -395,6 +398,9 @@ app.get('/api/stats', async (req, res) => {
       else if (status === 'no answer') stats.call.noAnswer = r.count;
       else if (status === 'left message') stats.call.leftMessage = r.count;
       else if (status === 'failed') stats.call.failed = r.count;
+      else if (status === 'no response') stats.call.noResponse = r.count;
+      else if (status === 'out of country') stats.call.outOfCountry = r.count;
+      else if (status === 'switched off') stats.call.switchedOff = r.count;
     });
 
     reactionRows.forEach(r => {

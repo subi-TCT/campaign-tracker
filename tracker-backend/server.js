@@ -111,6 +111,24 @@ const db = new sqlite3.Database(dbPath, (err) => {
     console.error('Error connecting to SQLite database:', err.message);
   } else {
     console.log('Connected to SQLite database at:', dbPath);
+    // Run self-healing schema migrations on startup to add new columns if they are missing
+    db.serialize(() => {
+      db.run("ALTER TABLE contacts ADD COLUMN emirate TEXT", (alterErr) => {
+        if (alterErr && !alterErr.message.includes("duplicate column name")) {
+          console.error("Migration error adding emirate:", alterErr.message);
+        }
+      });
+      db.run("ALTER TABLE contacts ADD COLUMN district TEXT", (alterErr) => {
+        if (alterErr && !alterErr.message.includes("duplicate column name")) {
+          console.error("Migration error adding district:", alterErr.message);
+        }
+      });
+      db.run("ALTER TABLE contacts ADD COLUMN assigned_to TEXT DEFAULT 'Unassigned'", (alterErr) => {
+        if (alterErr && !alterErr.message.includes("duplicate column name")) {
+          console.error("Migration error adding assigned_to:", alterErr.message);
+        }
+      });
+    });
   }
 });
 

@@ -26,13 +26,13 @@ const CAMPAIGN_CANDIDATES = [
   { sno: 3, name: "SHAJI JOHN", post: "Treasurer", initials: "SJ", photo: "/candidates/shaji.jpg" },
   { sno: 1, name: "ANILAL PURUSHOTHAMAN", post: "Joint Treasurer", initials: "AP", photo: "/candidates/anilal.jpg" },
   { sno: 3, name: "THANIKACHAN MANDAPATHIL (CA)", post: "Auditor", initials: "TM", photo: "/candidates/THANIKACHAN.jpg" },
-  { sno: 2, name: "ABHILASH RETNAKARAN", post: "Managing Committee Member", initials: "AR", photo: "" },
+  { sno: 2, name: "ABHILASH RETNAKARAN", post: "Managing Committee Member", initials: "AR", photo: "/candidates/ABHILASH RETNAKARAN_L3651.png" },
   { sno: 3, name: "ANIL KUMAR K G PILLAI", post: "Managing Committee Member", initials: "AK", photo: "/candidates/anil.jpg" },
-  { sno: 5, name: "BAVOO BASHEER. R (BAVOO BASHEER)", post: "Managing Committee Member", initials: "BB", photo: "" },
-  { sno: 7, name: "JAFER KANNATE", post: "Managing Committee Member", initials: "JK", photo: "" },
-  { sno: 17, name: "PUNNAKKAN MUHAMMED ALI (PUNNAKKAN)", post: "Managing Committee Member", initials: "PM", photo: "" },
-  { sno: 18, name: "ROY MATHEW", post: "Managing Committee Member", initials: "RM", photo: "" },
-  { sno: 20, name: "SHANTY THOMAS CHERUVATHOOR", post: "Managing Committee Member", initials: "ST", photo: "" }
+  { sno: 5, name: "BAVOO BASHEER. R (BAVOO BASHEER)", post: "Managing Committee Member", initials: "BB", photo: "/candidates/BAVOO BASHEER R._L2126.png" },
+  { sno: 7, name: "JAFER KANNATE", post: "Managing Committee Member", initials: "JK", photo: "/candidates/JAFER KANNATE_L1684.png" },
+  { sno: 17, name: "PUNNAKKAN MUHAMMED ALI (PUNNAKKAN)", post: "Managing Committee Member", initials: "PM", photo: "/candidates/PUNNAKKAN MUHAMMED ALI_L2786.png" },
+  { sno: 18, name: "ROY MATHEW", post: "Managing Committee Member", initials: "RM", photo: "/candidates/ROY MATHEW_L2937.png" },
+  { sno: 20, name: "SHANTY THOMAS CHERUVATHOOR", post: "Managing Committee Member", initials: "ST", photo: "/candidates/SHANTY THOMAS CHERUVATHOOR_L3206.png" }
 ];
 
 export default function App() {

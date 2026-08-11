@@ -98,8 +98,12 @@ const processNext = (index) => {
   const mobile = formatMobile(row['Mobile (UAE)']);
   const email = String(row['Email'] || '').trim();
   const sNo = String(row['S.No'] || '').trim().replace(/\.0$/, '');
+  
+  const emirate = String(row['Emirate'] || '').trim();
+  const district = String(row['District'] || '').trim();
+  const assignedTo = String(row['Assigned To'] || 'Unassigned').trim();
 
-  db.get("SELECT id, account_name, mobile_number, email_id FROM contacts WHERE acc_code = ?", [accCode], (err, dbMatch) => {
+  db.get("SELECT id, account_name, mobile_number, email_id, emirate, district, assigned_to FROM contacts WHERE acc_code = ?", [accCode], (err, dbMatch) => {
     if (err) {
       console.error(`Error checking acc_code ${accCode}:`, err.message);
       processNext(index + 1);
@@ -114,9 +118,10 @@ const processNext = (index) => {
           email_status, email_sent_date,
           whatsapp_status, whatsapp_sent_date,
           call_status, call_sent_date, notes,
-          member_reaction, exit_poll_status
-        ) VALUES (?, ?, ?, ?, ?, 'Pending', '', 'Pending', '', 'Not Called', '', '', 'Unknown', 'Pending')
-      `, [sNo, accCode, name, mobile, email], (insertErr) => {
+          member_reaction, exit_poll_status,
+          emirate, district, assigned_to
+        ) VALUES (?, ?, ?, ?, ?, 'Pending', '', 'Pending', '', 'Not Called', '', '', 'Unknown', 'Pending', ?, ?, ?)
+      `, [sNo, accCode, name, mobile, email, emirate, district, assignedTo], (insertErr) => {
         if (insertErr) {
           console.error(`Error inserting ${accCode}:`, insertErr.message);
         } else {
@@ -141,12 +146,21 @@ const processNext = (index) => {
         updateFields.push("email_id = ?");
         params.push(email);
       }
+      if (dbMatch.emirate !== emirate && emirate !== '') {
+        updateFields.push("emirate = ?");
+        params.push(emirate);
+      }
+      if (dbMatch.district !== district && district !== '') {
+        updateFields.push("district = ?");
+        params.push(district);
+      }
+      if (dbMatch.assigned_to !== assignedTo && assignedTo !== '') {
+        updateFields.push("assigned_to = ?");
+        params.push(assignedTo);
+      }
 
       if (updateFields.length > 0) {
         params.push(accCode);
-        const updateQuery = `UPDATE contacts SET {updateFields.join(', ')} WHERE acc_code = ?`;
-        
-        // Correct syntax bug in template string
         const updateQueryCorrected = `UPDATE contacts SET ${updateFields.join(', ')} WHERE acc_code = ?`;
         
         db.run(updateQueryCorrected, params, (updateErr) => {

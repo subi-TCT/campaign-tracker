@@ -141,7 +141,8 @@ app.get('/api/contacts', async (req, res) => {
              email_status, email_sent_date, 
              whatsapp_status, whatsapp_sent_date, 
              call_status, call_sent_date, notes,
-             member_reaction, exit_poll_status
+             member_reaction, exit_poll_status,
+             emirate, district, assigned_to
       FROM contacts 
       ORDER BY s_no ASC
     `);
@@ -181,7 +182,10 @@ app.put('/api/contacts/:id', async (req, res) => {
     call_sent_date,
     notes,
     member_reaction,
-    exit_poll_status
+    exit_poll_status,
+    emirate,
+    district,
+    assigned_to
   } = req.body;
 
   try {
@@ -200,7 +204,10 @@ app.put('/api/contacts/:id', async (req, res) => {
       call_sent_date: call_sent_date !== undefined ? call_sent_date : existing.call_sent_date,
       notes: notes !== undefined ? notes : existing.notes,
       member_reaction: member_reaction !== undefined ? member_reaction : existing.member_reaction,
-      exit_poll_status: exit_poll_status !== undefined ? exit_poll_status : existing.exit_poll_status
+      exit_poll_status: exit_poll_status !== undefined ? exit_poll_status : existing.exit_poll_status,
+      emirate: emirate !== undefined ? emirate : existing.emirate,
+      district: district !== undefined ? district : existing.district,
+      assigned_to: assigned_to !== undefined ? assigned_to : existing.assigned_to
     };
 
     await run(`
@@ -208,7 +215,8 @@ app.put('/api/contacts/:id', async (req, res) => {
       SET email_status = ?, email_sent_date = ?, 
           whatsapp_status = ?, whatsapp_sent_date = ?, 
           call_status = ?, call_sent_date = ?, notes = ?,
-          member_reaction = ?, exit_poll_status = ?
+          member_reaction = ?, exit_poll_status = ?,
+          emirate = ?, district = ?, assigned_to = ?
       WHERE id = ?
     `, [
       updated.email_status,
@@ -220,6 +228,9 @@ app.put('/api/contacts/:id', async (req, res) => {
       updated.notes,
       updated.member_reaction,
       updated.exit_poll_status,
+      updated.emirate,
+      updated.district,
+      updated.assigned_to,
       id
     ]);
 
@@ -327,6 +338,47 @@ app.get('/api/stats', async (req, res) => {
     const [whatsappTodayRow] = await query('SELECT count(*) as count FROM contacts WHERE whatsapp_status = "Sent" AND whatsapp_sent_date = ?', [today]);
     const [callTodayRow] = await query('SELECT count(*) as count FROM contacts WHERE call_status != "Not Called" AND call_sent_date = ?', [today]);
 
+    // Emirate grouping
+    const emirateRows = await query(`
+      SELECT COALESCE(NULLIF(emirate, ''), 'Not recorded') as emirate,
+             count(*) as total,
+             sum(case when call_status != 'Not Called' then 1 else 0 end) as contacted,
+             sum(case when member_reaction in ('Strong Support (Panel)', 'Leaning Support (Anil Kumar only)') then 1 else 0 end) as positive
+      FROM contacts
+      GROUP BY emirate
+      ORDER BY total DESC
+    `);
+
+    // District grouping
+    const districtRows = await query(`
+      SELECT COALESCE(NULLIF(district, ''), 'Unmatched - check') as district,
+             count(*) as total,
+             sum(case when call_status != 'Not Called' then 1 else 0 end) as contacted,
+             sum(case when member_reaction in ('Strong Support (Panel)', 'Leaning Support (Anil Kumar only)') then 1 else 0 end) as positive
+      FROM contacts
+      GROUP BY district
+      ORDER BY total DESC
+    `);
+
+    // Volunteer grouping
+    const volunteerRows = await query(`
+      SELECT COALESCE(NULLIF(assigned_to, ''), 'Unassigned') as assigned_to,
+             count(*) as assigned,
+             sum(case when call_status != 'Not Called' then 1 else 0 end) as done,
+             sum(case when member_reaction in ('Strong Support (Panel)', 'Leaning Support (Anil Kumar only)') then 1 else 0 end) as positive
+      FROM contacts
+      GROUP BY assigned_to
+      ORDER BY assigned DESC
+    `);
+
+    // Response breakdown counts
+    const [breakdownPositive] = await query("SELECT count(*) as count FROM contacts WHERE member_reaction IN ('Strong Support (Panel)', 'Leaning Support (Anil Kumar only)')");
+    const [breakdownFollowup] = await query("SELECT count(*) as count FROM contacts WHERE call_status IN ('Busy', 'Reminder Request', 'Left Message') AND (member_reaction IS NULL OR member_reaction NOT IN ('Strong Support (Panel)', 'Leaning Support (Anil Kumar only)'))");
+    const [breakdownUndecided] = await query("SELECT count(*) as count FROM contacts WHERE member_reaction = 'Undecided / Needs Follow-up'");
+    const [breakdownNegative] = await query("SELECT count(*) as count FROM contacts WHERE member_reaction = 'Opposed'");
+    const [breakdownUnreachable] = await query("SELECT count(*) as count FROM contacts WHERE call_status IN ('No Response', 'Switched Off', 'No Answer', 'Failed')");
+    const [breakdownNotContacted] = await query("SELECT count(*) as count FROM contacts WHERE call_status = 'Not Called'");
+
     // Format outputs
     const stats = {
       totalContacts: total,
@@ -372,6 +424,17 @@ app.get('/api/stats', async (req, res) => {
         secured: 0,
         lost: 0,
         votedUnknown: 0
+      },
+      byEmirate: emirateRows,
+      byDistrict: districtRows,
+      byVolunteer: volunteerRows,
+      excelBreakdown: {
+        positive: breakdownPositive.count,
+        followup: breakdownFollowup.count,
+        undecided: breakdownUndecided.count,
+        negative: breakdownNegative.count,
+        unreachable: breakdownUnreachable.count,
+        notContacted: breakdownNotContacted.count,
       }
     };
 

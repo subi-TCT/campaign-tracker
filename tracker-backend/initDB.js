@@ -47,7 +47,10 @@ db.serialize(() => {
       call_sent_date TEXT DEFAULT '',
       notes TEXT DEFAULT '',
       member_reaction TEXT DEFAULT 'Unknown',
-      exit_poll_status TEXT DEFAULT 'Pending'
+      exit_poll_status TEXT DEFAULT 'Pending',
+      emirate TEXT,
+      district TEXT,
+      assigned_to TEXT DEFAULT 'Unassigned'
     )
   `, (err) => {
     if (err) {
@@ -55,7 +58,7 @@ db.serialize(() => {
       db.close();
       process.exit(1);
     }
-    console.log('Created contacts table with Sentiment and Exit Poll columns.');
+    console.log('Created contacts table with Sentiment, Exit Poll, and Location/Assigned columns.');
 
     // Prepare statement for bulk insert
     const stmt = db.prepare(`
@@ -64,9 +67,10 @@ db.serialize(() => {
         email_status, email_sent_date, 
         whatsapp_status, whatsapp_sent_date, 
         call_status, call_sent_date, notes,
-        member_reaction, exit_poll_status
+        member_reaction, exit_poll_status,
+        emirate, district, assigned_to
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     db.parallelize(() => {
@@ -85,7 +89,10 @@ db.serialize(() => {
           contact.callSentDate || '',
           contact.callNotes || '',
           'Unknown', // member_reaction
-          'Pending'  // exit_poll_status
+          'Pending',  // exit_poll_status
+          contact.emirate || '',
+          contact.district || '',
+          contact.assigned_to || 'Unassigned'
         );
       }
     });

@@ -3,7 +3,7 @@ import {
   Users, Mail, Phone, MessageSquare, AlertTriangle, Search, 
   ChevronLeft, ChevronRight, CheckCircle, Clock, Edit2, 
   Plus, FileText, Settings, HelpCircle, Save, ExternalLink,
-  Sun, Moon, Upload, AlertCircle, X, Vote, Award
+  Sun, Moon, Upload, AlertCircle, X, Vote, Award, BarChart2, Map
 } from 'lucide-react';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001/api';
@@ -597,6 +597,12 @@ export default function App() {
               </button>
             </li>
             <li className="nav-item">
+              <button className={`nav-link ${activeTab === 'excelDashboard' ? 'active' : ''}`} onClick={() => { setActiveTab('excelDashboard'); }}>
+                <BarChart2 size={18} />
+                Detailed Analytics
+              </button>
+            </li>
+            <li className="nav-item">
               <button className={`nav-link ${activeTab === 'exitpoll' ? 'active' : ''}`} onClick={() => { setActiveTab('exitpoll'); setExitPollSearch(''); }}>
                 <Vote size={18} />
                 Exit Poll (Sep 6)
@@ -949,6 +955,211 @@ export default function App() {
                     </div>
                   </div>
                 </div>
+              </div>
+            </div>
+          )}
+
+          {/* ==================== EXCEL DETAILED ANALYTICS DASHBOARD ==================== */}
+          {activeTab === 'excelDashboard' && (
+            <div>
+              <h2 className="tab-title">Detailed Campaign Analytics (Excel View)</h2>
+
+              {/* Dynamic KPI Overview cards */}
+              <div className="stats-grid" style={{ marginBottom: 24 }}>
+                <div className="stat-card">
+                  <div className="stat-header"><span>Total Register Members</span></div>
+                  <div className="stat-value">{stats.totalContacts}</div>
+                  <div className="stat-desc">Imported from election roster</div>
+                </div>
+                <div className="stat-card success">
+                  <div className="stat-header"><span>Voters Contacted</span></div>
+                  <div className="stat-value">
+                    {stats.totalContacts - stats.call.notCalled}
+                  </div>
+                  <div className="stat-desc">
+                    {Math.round(((stats.totalContacts - stats.call.notCalled) / stats.totalContacts) * 100) || 0}% Contact Rate
+                  </div>
+                </div>
+                <div className="stat-card warning">
+                  <div className="stat-header"><span>Confirmed Positive (Support)</span></div>
+                  <div className="stat-value">
+                    {stats.excelBreakdown ? stats.excelBreakdown.positive : 0}
+                  </div>
+                  <div className="stat-desc">
+                    {Math.round(((stats.excelBreakdown ? stats.excelBreakdown.positive : 0) / (stats.totalContacts - stats.call.notCalled || 1)) * 100) || 0}% Support Confirmations
+                  </div>
+                </div>
+                <div className="stat-card">
+                  <div className="stat-header"><span>Still to Call / Outreach</span></div>
+                  <div className="stat-value">{stats.call.notCalled}</div>
+                  <div className="stat-desc">Voters remaining in queue</div>
+                </div>
+              </div>
+
+              {/* Response Breakdown and District breakdown */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1.8fr', gap: '20px', marginBottom: '24px' }}>
+                
+                {/* 1. Call Response Breakdown */}
+                <div className="glass-panel">
+                  <h3 className="panel-title" style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
+                    <BarChart2 size={16} color="#6366f1" /> Response Breakdown
+                  </h3>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                    {[
+                      { label: 'Positive', count: stats.excelBreakdown ? stats.excelBreakdown.positive : 0, color: '#10b981' },
+                      { label: 'To Be Followed Up', count: stats.excelBreakdown ? stats.excelBreakdown.followup : 0, color: '#f59e0b' },
+                      { label: 'Undecided', count: stats.excelBreakdown ? stats.excelBreakdown.undecided : 0, color: '#a78bfa' },
+                      { label: 'Negative', count: stats.excelBreakdown ? stats.excelBreakdown.negative : 0, color: '#ef4444' },
+                      { label: 'Unreachable', count: stats.excelBreakdown ? stats.excelBreakdown.unreachable : 0, color: '#94a3b8' },
+                      { label: 'Not Contacted', count: stats.excelBreakdown ? stats.excelBreakdown.notContacted : 0, color: '#4b5563' }
+                    ].map((item, idx) => {
+                      const percentage = Math.round((item.count / (stats.totalContacts || 1)) * 100);
+                      return (
+                        <div key={idx}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: 'var(--color-text-white)', marginBottom: 4 }}>
+                            <span>{item.label}</span>
+                            <span style={{ fontWeight: 600 }}>{item.count} ({percentage}%)</span>
+                          </div>
+                          <div style={{ height: '6px', background: 'rgba(255,255,255,0.05)', borderRadius: '3px', overflow: 'hidden' }}>
+                            <div style={{ height: '100%', width: `${percentage}%`, background: item.color, borderRadius: '3px' }}></div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* 2. District Breakdown */}
+                <div className="glass-panel" style={{ display: 'flex', flexDirection: 'column', maxHeight: '420px' }}>
+                  <h3 className="panel-title" style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
+                    <Users size={16} color="#10b981" /> Kerala Home Districts
+                  </h3>
+                  <div style={{ overflowY: 'auto', flexGrow: 1 }}>
+                    <table className="data-table small" style={{ width: '100%', fontSize: '12px' }}>
+                      <thead>
+                        <tr>
+                          <th>District</th>
+                          <th style={{ textAlign: 'center' }}>Members</th>
+                          <th style={{ textAlign: 'center' }}>Contacted</th>
+                          <th style={{ textAlign: 'center' }}>Positive</th>
+                          <th style={{ textAlign: 'center' }}>% Contacted</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(stats.byDistrict || []).map((row, idx) => {
+                          const contactRate = Math.round((row.contacted / row.total) * 100) || 0;
+                          return (
+                            <tr key={idx}>
+                              <td style={{ fontWeight: 500, color: 'var(--color-text-white)' }}>{row.district}</td>
+                              <td style={{ textAlign: 'center' }}>{row.total}</td>
+                              <td style={{ textAlign: 'center' }}>{row.contacted}</td>
+                              <td style={{ textAlign: 'center', color: '#34d399', fontWeight: 600 }}>{row.positive}</td>
+                              <td style={{ textAlign: 'center' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+                                  <div style={{ width: '50px', height: '4px', background: 'rgba(255,255,255,0.05)', borderRadius: '2px', overflow: 'hidden' }}>
+                                    <div style={{ height: '100%', width: `${contactRate}%`, background: '#3b82f6' }}></div>
+                                  </div>
+                                  <span>{contactRate}%</span>
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+
+              {/* Emirate breakdown and Volunteer Performance */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1.6fr', gap: '20px' }}>
+                
+                {/* 3. UAE Emirates */}
+                <div className="glass-panel" style={{ maxHeight: '420px', display: 'flex', flexDirection: 'column' }}>
+                  <h3 className="panel-title" style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
+                    <Map size={16} color="#3b82f6" /> UAE Emirate Distribution
+                  </h3>
+                  <div style={{ overflowY: 'auto', flexGrow: 1 }}>
+                    <table className="data-table small" style={{ width: '100%', fontSize: '12px' }}>
+                      <thead>
+                        <tr>
+                          <th>Emirate</th>
+                          <th style={{ textAlign: 'center' }}>Members</th>
+                          <th style={{ textAlign: 'center' }}>Contacted</th>
+                          <th style={{ textAlign: 'center' }}>Positive</th>
+                          <th style={{ textAlign: 'center' }}>% Contacted</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(stats.byEmirate || []).map((row, idx) => {
+                          const contactRate = Math.round((row.contacted / row.total) * 100) || 0;
+                          return (
+                            <tr key={idx}>
+                              <td style={{ fontWeight: 500, color: 'var(--color-text-white)' }}>{row.emirate}</td>
+                              <td style={{ textAlign: 'center' }}>{row.total}</td>
+                              <td style={{ textAlign: 'center' }}>{row.contacted}</td>
+                              <td style={{ textAlign: 'center', color: '#34d399', fontWeight: 600 }}>{row.positive}</td>
+                              <td style={{ textAlign: 'center' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+                                  <div style={{ width: '50px', height: '4px', background: 'rgba(255,255,255,0.05)', borderRadius: '2px', overflow: 'hidden' }}>
+                                    <div style={{ height: '100%', width: `${contactRate}%`, background: '#60a5fa' }}></div>
+                                  </div>
+                                  <span>{contactRate}%</span>
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                {/* 4. Volunteer Leaderboard */}
+                <div className="glass-panel" style={{ maxHeight: '420px', display: 'flex', flexDirection: 'column' }}>
+                  <h3 className="panel-title" style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
+                    <Award size={16} color="#f59e0b" /> Volunteer Call Tracker
+                  </h3>
+                  <div style={{ overflowY: 'auto', flexGrow: 1 }}>
+                    <table className="data-table small" style={{ width: '100%', fontSize: '12px' }}>
+                      <thead>
+                        <tr>
+                          <th>Caller</th>
+                          <th style={{ textAlign: 'center' }}>Assigned</th>
+                          <th style={{ textAlign: 'center' }}>Done</th>
+                          <th style={{ textAlign: 'center' }}>Positive</th>
+                          <th style={{ textAlign: 'center' }}>Success Rate</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(stats.byVolunteer || []).map((row, idx) => {
+                          const successRate = Math.round((row.positive / (row.done || 1)) * 100) || 0;
+                          return (
+                            <tr key={idx}>
+                              <td style={{ fontWeight: 600, color: row.assigned_to === 'Unassigned' ? 'var(--color-text-muted)' : '#818cf8' }}>{row.assigned_to}</td>
+                              <td style={{ textAlign: 'center' }}>{row.assigned}</td>
+                              <td style={{ textAlign: 'center' }}>{row.done}</td>
+                              <td style={{ textAlign: 'center', color: '#34d399', fontWeight: 600 }}>{row.positive}</td>
+                              <td style={{ textAlign: 'center' }}>
+                                <span style={{ 
+                                  background: successRate >= 70 ? 'rgba(16,185,129,0.1)' : 'rgba(255,255,255,0.05)',
+                                  color: successRate >= 70 ? '#34d399' : 'var(--color-text-white)',
+                                  padding: '2px 6px',
+                                  borderRadius: '4px',
+                                  fontSize: '11px',
+                                  fontWeight: 600
+                                }}>
+                                  {successRate}%
+                                </span>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
               </div>
             </div>
           )}

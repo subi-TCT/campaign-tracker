@@ -1306,3 +1306,198 @@ body.light-theme select option {
   background-color: #ffffff;
   color: #0f172a;
 }
+
+/* ==================== MOBILE RESPONSIVENESS & UI OPTIMIZATIONS ==================== */
+
+/* Hide mobile header on desktop by default */
+.mobile-header {
+  display: none;
+}
+
+.mobile-sidebar-overlay {
+  display: none;
+}
+
+/* Mobile Media Queries (screens <= 768px) */
+@media (max-width: 768px) {
+  
+  /* Reset container column split to vertical flow */
+  .app-container {
+    grid-template-columns: 1fr !important;
+    padding-top: 60px; /* Offset sticky mobile header */
+  }
+
+  /* Sticky top mobile bar */
+  .mobile-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 60px;
+    background: var(--bg-card);
+    border-bottom: 1px solid var(--border-color);
+    padding: 0 16px;
+    z-index: 100;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+    backdrop-filter: blur(10px);
+  }
+
+  .menu-toggle-btn {
+    background: transparent;
+    border: none;
+    color: var(--color-text-white);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 8px;
+    border-radius: var(--radius-md);
+    transition: background 0.2s;
+  }
+
+  body.light-theme .menu-toggle-btn {
+    color: #0f172a;
+  }
+
+  .menu-toggle-btn:hover {
+    background: rgba(255, 255, 255, 0.05);
+  }
+
+  .mobile-brand {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .brand-logo-small {
+    background: linear-gradient(135deg, var(--color-primary), var(--color-primary-hover));
+    color: #ffffff;
+    font-weight: 700;
+    font-size: 14px;
+    padding: 4px 8px;
+    border-radius: var(--radius-sm);
+  }
+
+  .brand-title-small {
+    font-weight: 600;
+    font-size: 15px;
+    color: var(--color-text-white);
+  }
+
+  body.light-theme .brand-title-small {
+    color: #0f172a;
+  }
+
+  /* Overlay backdrop when menu is open */
+  .mobile-sidebar-overlay {
+    display: block;
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.7);
+    backdrop-filter: blur(2px);
+    z-index: 140;
+  }
+
+  /* Position Sidebar offscreen and make it slide in as a drawer overlay */
+  .sidebar {
+    position: fixed;
+    top: 0;
+    left: -280px;
+    width: 280px;
+    height: 100vh;
+    z-index: 150;
+    box-shadow: 10px 0 30px rgba(0, 0, 0, 0.5);
+    transition: left 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    background: var(--bg-card);
+    border-right: 1px solid var(--border-color);
+  }
+
+  .sidebar.open {
+    left: 0 !important;
+  }
+
+  /* Main Canvas sizing */
+  .content-canvas {
+    padding: 16px !important;
+    height: auto !important;
+    overflow-y: visible !important;
+  }
+
+  /* Grid components stacking */
+  .stats-grid {
+    grid-template-columns: 1fr !important;
+    gap: 12px !important;
+  }
+
+  .grid-2, .tracker-row, .bottom-row, 
+  div[style*="display: grid"], 
+  div[style*="display:grid"] {
+    grid-template-columns: 1fr !important;
+    gap: 16px !important;
+  }
+
+  /* Touch Target Optimizations */
+  .btn, .nav-link, button, select, input {
+    min-height: 44px; /* Apple iOS standard tap targets */
+  }
+
+  /* Disable iOS double-tap zoom by setting form element font size to 16px */
+  input, select, textarea {
+    font-size: 16px !important;
+  }
+
+  /* Scrollable Table Wrappers to prevent table breakage */
+  .table-wrapper {
+    overflow-x: auto !important;
+    width: 100% !important;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border-color);
+  }
+
+  table {
+    min-width: 600px; /* Force overflow trigger instead of squishing columns */
+  }
+
+  /* Make editing log drawer full-width on mobile device */
+  .right-panel {
+    width: 100% !important;
+    right: -100% !important;
+  }
+
+  .right-panel.open {
+    right: 0 !important;
+  }
+
+  /* Modal responsive scale */
+  .modal {
+    width: 95% !important;
+    padding: 16px !important;
+  }
+
+  /* Search & Controls wrap */
+  .controls-wrapper, .filters-wrapper {
+    flex-direction: column !important;
+    align-items: stretch !important;
+    gap: 12px !important;
+  }
+
+  .search-wrapper {
+    width: 100% !important;
+  }
+
+  .filter-select {
+    width: 100% !important;
+  }
+
+  /* Target widget responsive text */
+  .stat-value {
+    font-size: 26px !important;
+  }
+}
+

@@ -3,7 +3,7 @@ import {
   Users, Mail, Phone, MessageSquare, AlertTriangle, Search, 
   ChevronLeft, ChevronRight, CheckCircle, Clock, Edit2, 
   Plus, FileText, Settings, HelpCircle, Save, ExternalLink,
-  Sun, Moon, Upload, AlertCircle, X, Vote, Award, BarChart2, Map
+  Sun, Moon, Upload, AlertCircle, X, Vote, Award, BarChart2, Map, Menu
 } from 'lucide-react';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001/api';
@@ -46,6 +46,7 @@ export default function App() {
 
   // Navigation
   const [activeTab, setActiveTab] = useState('dashboard');
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   
   // Searching & Pagination
   const [searchQuery, setSearchQuery] = useState('');
@@ -179,6 +180,16 @@ export default function App() {
   // Toggle Theme
   const toggleTheme = () => {
     setTheme(prev => prev === 'dark' ? 'light' : 'dark');
+  };
+
+  // Safe tab selector that closes the mobile sidebar drawer
+  const selectTab = (tabName, searchReset = false) => {
+    setActiveTab(tabName);
+    setMobileMenuOpen(false);
+    if (searchReset) {
+      setCurrentPage(1);
+      setSearchQuery('');
+    }
   };
 
   // Update contact status helper
@@ -578,8 +589,25 @@ export default function App() {
 
   return (
     <div className="app-container">
+      {/* Mobile Top Bar Header */}
+      <header className="mobile-header">
+        <button className="menu-toggle-btn" onClick={() => setMobileMenuOpen(prev => !prev)}>
+          {mobileMenuOpen ? <X size={24} /> : <Menu size={24} />}
+        </button>
+        <div className="mobile-brand">
+          <span className="brand-logo-small">AK</span>
+          <span className="brand-title-small">Anil Kumar K G P</span>
+        </div>
+        <div style={{ width: 24 }}></div> {/* Balance layout */}
+      </header>
+
+      {/* Backdrop overlay for mobile menu */}
+      {mobileMenuOpen && (
+        <div className="mobile-sidebar-overlay" onClick={() => setMobileMenuOpen(false)}></div>
+      )}
+
       {/* Sidebar Navigation */}
-      <aside className="sidebar">
+      <aside className={`sidebar ${mobileMenuOpen ? 'open' : ''}`}>
         <div className="brand-section">
           <div className="brand-logo">AK</div>
           <div className="brand-name">
@@ -591,61 +619,61 @@ export default function App() {
         <nav style={{ flexGrow: 1 }}>
           <ul className="nav-menu">
             <li className="nav-item">
-              <button className={`nav-link ${activeTab === 'dashboard' ? 'active' : ''}`} onClick={() => { setActiveTab('dashboard'); setCurrentPage(1); setSearchQuery(''); }}>
+              <button className={`nav-link ${activeTab === 'dashboard' ? 'active' : ''}`} onClick={() => selectTab('dashboard', true)}>
                 <Users size={18} />
                 Dashboard Overview
               </button>
             </li>
             <li className="nav-item">
-              <button className={`nav-link ${activeTab === 'excelDashboard' ? 'active' : ''}`} onClick={() => { setActiveTab('excelDashboard'); }}>
+              <button className={`nav-link ${activeTab === 'excelDashboard' ? 'active' : ''}`} onClick={() => selectTab('excelDashboard')}>
                 <BarChart2 size={18} />
                 Detailed Analytics
               </button>
             </li>
             <li className="nav-item">
-              <button className={`nav-link ${activeTab === 'exitpoll' ? 'active' : ''}`} onClick={() => { setActiveTab('exitpoll'); setExitPollSearch(''); }}>
+              <button className={`nav-link ${activeTab === 'exitpoll' ? 'active' : ''}`} onClick={() => { selectTab('exitpoll'); setExitPollSearch(''); }}>
                 <Vote size={18} />
                 Exit Poll (Sep 6)
               </button>
             </li>
             <li className="nav-item">
-              <button className={`nav-link ${activeTab === 'candidates' ? 'active' : ''}`} onClick={() => { setActiveTab('candidates'); }}>
+              <button className={`nav-link ${activeTab === 'candidates' ? 'active' : ''}`} onClick={() => selectTab('candidates')}>
                 <Award size={18} />
                 Our Candidates
               </button>
             </li>
             <li className="nav-item">
-              <button className={`nav-link ${activeTab === 'email' ? 'active' : ''}`} onClick={() => { setActiveTab('email'); setCurrentPage(1); setSearchQuery(''); }}>
+              <button className={`nav-link ${activeTab === 'email' ? 'active' : ''}`} onClick={() => selectTab('email', true)}>
                 <Mail size={18} />
                 Email Campaign
               </button>
             </li>
             <li className="nav-item">
-              <button className={`nav-link ${activeTab === 'call' ? 'active' : ''}`} onClick={() => { setActiveTab('call'); setCurrentPage(1); setSearchQuery(''); }}>
+              <button className={`nav-link ${activeTab === 'call' ? 'active' : ''}`} onClick={() => selectTab('call', true)}>
                 <Phone size={18} />
                 Call Center
               </button>
             </li>
             <li className="nav-item">
-              <button className={`nav-link ${activeTab === 'whatsapp' ? 'active' : ''}`} onClick={() => { setActiveTab('whatsapp'); setCurrentPage(1); setSearchQuery(''); }}>
+              <button className={`nav-link ${activeTab === 'whatsapp' ? 'active' : ''}`} onClick={() => selectTab('whatsapp', true)}>
                 <MessageSquare size={18} />
                 WhatsApp Campaign
               </button>
             </li>
             <li className="nav-item">
-              <button className={`nav-link ${activeTab === 'quality' ? 'active' : ''}`} onClick={() => { setActiveTab('quality'); setCurrentPage(1); setSearchQuery(''); }}>
+              <button className={`nav-link ${activeTab === 'quality' ? 'active' : ''}`} onClick={() => selectTab('quality', true)}>
                 <AlertTriangle size={18} />
                 Data Integrity
               </button>
             </li>
             <li className="nav-item">
-              <button className={`nav-link ${activeTab === 'database' ? 'active' : ''}`} onClick={() => { setActiveTab('database'); setCurrentPage(1); setSearchQuery(''); }}>
+              <button className={`nav-link ${activeTab === 'database' ? 'active' : ''}`} onClick={() => selectTab('database', true)}>
                 <FileText size={18} />
                 Master Database
               </button>
             </li>
             <li className="nav-item">
-              <button className={`nav-link ${activeTab === 'templates' ? 'active' : ''}`} onClick={() => { setActiveTab('templates'); setCurrentPage(1); setSearchQuery(''); }}>
+              <button className={`nav-link ${activeTab === 'templates' ? 'active' : ''}`} onClick={() => selectTab('templates', true)}>
                 <Settings size={18} />
                 Message Templates
               </button>
@@ -654,7 +682,7 @@ export default function App() {
         </nav>
 
         {/* Theme Switcher Toggle */}
-        <button className="theme-switch-btn" onClick={toggleTheme}>
+        <button className="theme-switch-btn" onClick={() => { toggleTheme(); setMobileMenuOpen(false); }}>
           {theme === 'dark' ? (
             <>
               <Sun size={14} /> Light Theme Option
@@ -1034,7 +1062,7 @@ export default function App() {
                   <h3 className="panel-title" style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
                     <Users size={16} color="#10b981" /> Kerala Home Districts
                   </h3>
-                  <div style={{ overflowY: 'auto', flexGrow: 1 }}>
+                  <div className="table-wrapper" style={{ overflowY: 'auto', flexGrow: 1 }}>
                     <table className="data-table small" style={{ width: '100%', fontSize: '12px' }}>
                       <thead>
                         <tr>
@@ -1079,7 +1107,7 @@ export default function App() {
                   <h3 className="panel-title" style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
                     <Map size={16} color="#3b82f6" /> UAE Emirate Distribution
                   </h3>
-                  <div style={{ overflowY: 'auto', flexGrow: 1 }}>
+                  <div className="table-wrapper" style={{ overflowY: 'auto', flexGrow: 1 }}>
                     <table className="data-table small" style={{ width: '100%', fontSize: '12px' }}>
                       <thead>
                         <tr>
@@ -1120,7 +1148,7 @@ export default function App() {
                   <h3 className="panel-title" style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
                     <Award size={16} color="#f59e0b" /> Volunteer Call Tracker
                   </h3>
-                  <div style={{ overflowY: 'auto', flexGrow: 1 }}>
+                  <div className="table-wrapper" style={{ overflowY: 'auto', flexGrow: 1 }}>
                     <table className="data-table small" style={{ width: '100%', fontSize: '12px' }}>
                       <thead>
                         <tr>

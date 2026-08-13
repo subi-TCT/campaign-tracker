@@ -1481,7 +1481,7 @@ body.light-theme select option {
   }
 
   /* Search & Controls wrap */
-  .controls-wrapper, .filters-wrapper {
+  .controls-bar, .filters-wrapper {
     flex-direction: column !important;
     align-items: stretch !important;
     gap: 12px !important;

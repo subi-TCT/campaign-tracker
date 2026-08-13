@@ -61,6 +61,7 @@ export default function App() {
   const [callFilter, setCallFilter] = useState('All');
   const [whatsappFilter, setWhatsappFilter] = useState('All');
   const [qualityFilter, setQualityFilter] = useState('All');
+  const [sentimentFilter, setSentimentFilter] = useState('All');
 
   // Selection for bulk actions
   const [selectedContactIds, setSelectedContactIds] = useState([]);
@@ -189,6 +190,7 @@ export default function App() {
     if (searchReset) {
       setCurrentPage(1);
       setSearchQuery('');
+      setSentimentFilter('All');
     }
   };
 
@@ -490,6 +492,11 @@ export default function App() {
         const dups = mobiles.filter((item, index) => mobiles.indexOf(item) !== index);
         list = list.filter(c => c.mobile_number && dups.includes(c.mobile_number));
       }
+    }
+
+    // Global Sentiment Filter
+    if (sentimentFilter !== 'All') {
+      list = list.filter(c => c.member_reaction === sentimentFilter);
     }
 
     return list;
@@ -1421,6 +1428,18 @@ export default function App() {
                     <option value="Sent">Sent</option>
                     <option value="Undelivered">Undelivered</option>
                   </select>
+                  <select 
+                    className="filter-select" 
+                    value={sentimentFilter} 
+                    onChange={(e) => { setSentimentFilter(e.target.value); setCurrentPage(1); }}
+                  >
+                    <option value="All">All Sentiments</option>
+                    <option value="Strong Support (Panel)">Strong Support</option>
+                    <option value="Leaning Support (Anil Kumar only)">Leaning Support</option>
+                    <option value="Undecided / Needs Follow-up">Undecided</option>
+                    <option value="Opposed">Opposed</option>
+                    <option value="Unknown">Unknown / Not Logged</option>
+                  </select>
                   <button 
                     className="btn success" 
                     onClick={() => handleExportCSV(true)}
@@ -1562,6 +1581,18 @@ export default function App() {
                     <option value="Left Message">Left Message</option>
                     <option value="Failed">Failed / Declined</option>
                   </select>
+                  <select 
+                    className="filter-select" 
+                    value={sentimentFilter} 
+                    onChange={(e) => { setSentimentFilter(e.target.value); setCurrentPage(1); }}
+                  >
+                    <option value="All">All Sentiments</option>
+                    <option value="Strong Support (Panel)">Strong Support</option>
+                    <option value="Leaning Support (Anil Kumar only)">Leaning Support</option>
+                    <option value="Undecided / Needs Follow-up">Undecided</option>
+                    <option value="Opposed">Opposed</option>
+                    <option value="Unknown">Unknown / Not Logged</option>
+                  </select>
                   <button 
                     className="btn success" 
                     onClick={() => handleExportCSV(true)}
@@ -1700,6 +1731,18 @@ export default function App() {
                     <option value="Sent">Sent</option>
                     <option value="Delivered">Delivered</option>
                     <option value="Failed">Failed</option>
+                  </select>
+                  <select 
+                    className="filter-select" 
+                    value={sentimentFilter} 
+                    onChange={(e) => { setSentimentFilter(e.target.value); setCurrentPage(1); }}
+                  >
+                    <option value="All">All Sentiments</option>
+                    <option value="Strong Support (Panel)">Strong Support</option>
+                    <option value="Leaning Support (Anil Kumar only)">Leaning Support</option>
+                    <option value="Undecided / Needs Follow-up">Undecided</option>
+                    <option value="Opposed">Opposed</option>
+                    <option value="Unknown">Unknown / Not Logged</option>
                   </select>
                   <button 
                     className="btn success" 
@@ -1887,7 +1930,7 @@ export default function App() {
 
               {/* Search controls */}
               <div className="controls-bar">
-                <div className="search-wrapper" style={{ maxWidth: '100%' }}>
+                <div className="search-wrapper">
                   <Search size={18} className="search-icon" />
                   <input 
                     type="text" 
@@ -1896,6 +1939,20 @@ export default function App() {
                     value={searchQuery}
                     onChange={(e) => { setSearchQuery(e.target.value); setCurrentPage(1); }}
                   />
+                </div>
+                <div className="filters-wrapper">
+                  <select 
+                    className="filter-select" 
+                    value={sentimentFilter} 
+                    onChange={(e) => { setSentimentFilter(e.target.value); setCurrentPage(1); }}
+                  >
+                    <option value="All">All Sentiments</option>
+                    <option value="Strong Support (Panel)">Strong Support</option>
+                    <option value="Leaning Support (Anil Kumar only)">Leaning Support</option>
+                    <option value="Undecided / Needs Follow-up">Undecided</option>
+                    <option value="Opposed">Opposed</option>
+                    <option value="Unknown">Unknown / Not Logged</option>
+                  </select>
                 </div>
               </div>
 

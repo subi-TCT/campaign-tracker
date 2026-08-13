@@ -78,31 +78,47 @@ const initPostgresDB = async () => {
       if (fs.existsSync(jsonPath)) {
         const contacts = JSON.parse(fs.readFileSync(jsonPath, 'utf8'));
         console.log(`Pre-seeding PostgreSQL with ${contacts.length} default records...`);
-        for (const contact of contacts) {
-          await pgPool.query(`
+        const batchSize = 200;
+        for (let i = 0; i < contacts.length; i += batchSize) {
+          const batch = contacts.slice(i, i + batchSize);
+          const valueRows = [];
+          const params = [];
+          let paramIndex = 1;
+          
+          for (const contact of batch) {
+            valueRows.push(`(
+              $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++},
+              $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++},
+              $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++}
+            )`);
+            params.push(
+              contact.sNo || 0,
+              contact.accCode || '',
+              contact.name || '',
+              contact.mobile || '',
+              contact.email || '',
+              contact.emailStatus || 'Pending',
+              contact.emailSentDate || '',
+              contact.waStatus || 'Pending',
+              contact.waSentDate || '',
+              contact.callStatus || 'Not Called',
+              contact.callSentDate || '',
+              contact.callNotes || '',
+              'Unknown',
+              'Pending'
+            );
+          }
+          
+          const bulkQuery = `
             INSERT INTO contacts (
               s_no, acc_code, account_name, mobile_number, email_id,
               email_status, email_sent_date,
               whatsapp_status, whatsapp_sent_date,
               call_status, call_sent_date, notes,
               member_reaction, exit_poll_status
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
-          `, [
-            contact.sNo || 0,
-            contact.accCode || '',
-            contact.name || '',
-            contact.mobile || '',
-            contact.email || '',
-            contact.emailStatus || 'Pending',
-            contact.emailSentDate || '',
-            contact.waStatus || 'Pending',
-            contact.waSentDate || '',
-            contact.callStatus || 'Not Called',
-            contact.callSentDate || '',
-            contact.callNotes || '',
-            'Unknown',
-            'Pending'
-          ]);
+            ) VALUES ${valueRows.join(', ')}
+          `;
+          await pgPool.query(bulkQuery, params);
         }
         console.log('PostgreSQL database successfully pre-seeded!');
       } else {

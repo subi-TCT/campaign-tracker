@@ -17,44 +17,108 @@ if (!fs.existsSync(excelPath)) {
   process.exit(1);
 }
 
-if (!fs.existsSync(dbPath)) {
-  console.error('Error: SQLite database not found at', dbPath);
-  process.exit(1);
-}
+const isPostgres = !!process.env.DATABASE_URL;
+let db = null;
+let pgPool = null;
 
-// 1. Safety backup
-try {
-  fs.copyFileSync(dbPath, backupPath);
-  console.log('Safety backup created at:', backupPath);
-} catch (err) {
-  console.warn('Warning: Could not create safety backup:', err.message);
-}
-
-// 2. Connect to database
-const db = new sqlite3.Database(dbPath, (err) => {
-  if (err) {
-    console.error('Error connecting to database:', err.message);
+if (isPostgres) {
+  const { Pool } = require('pg');
+  pgPool = new Pool({
+    connectionString: process.env.DATABASE_URL,
+    ssl: {
+      rejectUnauthorized: false
+    }
+  });
+  console.log('PostgreSQL configuration detected for sync. Connecting to PostgreSQL...');
+} else {
+  if (!fs.existsSync(dbPath)) {
+    console.error('Error: SQLite database not found at', dbPath);
     process.exit(1);
   }
-  // Ensure table columns exist
-  db.serialize(() => {
-    db.run("ALTER TABLE contacts ADD COLUMN emirate TEXT", (alterErr) => {
-      if (alterErr && !alterErr.message.includes("duplicate column name")) {
-        console.error("Migration error adding emirate:", alterErr.message);
-      }
-    });
-    db.run("ALTER TABLE contacts ADD COLUMN district TEXT", (alterErr) => {
-      if (alterErr && !alterErr.message.includes("duplicate column name")) {
-        console.error("Migration error adding district:", alterErr.message);
-      }
-    });
-    db.run("ALTER TABLE contacts ADD COLUMN assigned_to TEXT DEFAULT 'Unassigned'", (alterErr) => {
-      if (alterErr && !alterErr.message.includes("duplicate column name")) {
-        console.error("Migration error adding assigned_to:", alterErr.message);
-      }
+
+  // 1. Safety backup (SQLite only)
+  try {
+    fs.copyFileSync(dbPath, backupPath);
+    console.log('Safety backup created at:', backupPath);
+  } catch (err) {
+    console.warn('Warning: Could not create safety backup:', err.message);
+  }
+
+  // 2. Connect to SQLite database
+  db = new sqlite3.Database(dbPath, (err) => {
+    if (err) {
+      console.error('Error connecting to SQLite:', err.message);
+      process.exit(1);
+    }
+    // Ensure table columns exist
+    db.serialize(() => {
+      db.run("ALTER TABLE contacts ADD COLUMN emirate TEXT", (alterErr) => {
+        if (alterErr && !alterErr.message.includes("duplicate column name")) {
+          console.error("Migration error adding emirate:", alterErr.message);
+        }
+      });
+      db.run("ALTER TABLE contacts ADD COLUMN district TEXT", (alterErr) => {
+        if (alterErr && !alterErr.message.includes("duplicate column name")) {
+          console.error("Migration error adding district:", alterErr.message);
+        }
+      });
+      db.run("ALTER TABLE contacts ADD COLUMN assigned_to TEXT DEFAULT 'Unassigned'", (alterErr) => {
+        if (alterErr && !alterErr.message.includes("duplicate column name")) {
+          console.error("Migration error adding assigned_to:", alterErr.message);
+        }
+      });
     });
   });
-});
+}
+
+// Convert SQLite '?' parameter placeholder to Postgres '$1, $2'
+const convertSql = (sql) => {
+  let converted = sql;
+  let index = 1;
+  converted = converted.replace(/\?/g, () => `$${index++}`);
+  return converted;
+};
+
+// Database abstraction helpers
+const dbGet = (sql, params = []) => {
+  return new Promise((resolve, reject) => {
+    if (isPostgres) {
+      pgPool.query(convertSql(sql), params, (err, result) => {
+        if (err) reject(err);
+        else resolve(result.rows[0] || null);
+      });
+    } else {
+      db.get(sql, params, (err, row) => {
+        if (err) reject(err);
+        else resolve(row || null);
+      });
+    }
+  });
+};
+
+const dbRun = (sql, params = []) => {
+  return new Promise((resolve, reject) => {
+    if (isPostgres) {
+      pgPool.query(convertSql(sql), params, (err, result) => {
+        if (err) reject(err);
+        else resolve(result);
+      });
+    } else {
+      db.run(sql, params, (err) => {
+        if (err) reject(err);
+        else resolve();
+      });
+    }
+  });
+};
+
+const dbClose = () => {
+  if (isPostgres) {
+    pgPool.end();
+  } else {
+    db.close();
+  }
+};
 
 // 3. Load Excel
 const workbook = xlsx.readFile(excelPath);
@@ -92,7 +156,7 @@ console.log(`Found ${activeRows.length} active member records to process.`);
 
 if (activeRows.length === 0) {
   console.log('No active records to process. Exiting.');
-  db.close();
+  dbClose();
   process.exit(0);
 }
 
@@ -100,10 +164,10 @@ if (activeRows.length === 0) {
 const processNext = (index) => {
   if (index >= activeRows.length) {
     console.log('\n--- Sync Completed ---');
-    console.log(`- Safety Backup: ${backupPath}`);
+    console.log(`- Safety Backup: ${isPostgres ? 'N/A (Cloud Backup)' : backupPath}`);
     console.log(`- New contacts added to DB: ${newCount}`);
     console.log(`- Existing contacts updated in DB: ${updateCount}`);
-    db.close();
+    dbClose();
     return;
   }
 
@@ -121,79 +185,77 @@ const processNext = (index) => {
   const district = String(row['District'] || '').trim();
   const assignedTo = String(row['Assigned To'] || 'Unassigned').trim();
 
-  db.get("SELECT id, account_name, mobile_number, email_id, emirate, district, assigned_to FROM contacts WHERE acc_code = ?", [accCode], (err, dbMatch) => {
-    if (err) {
+  dbGet("SELECT id, account_name, mobile_number, email_id, emirate, district, assigned_to FROM contacts WHERE acc_code = ?", [accCode])
+    .then((dbMatch) => {
+      if (!dbMatch) {
+        dbRun(`
+          INSERT INTO contacts (
+            s_no, acc_code, account_name, mobile_number, email_id,
+            email_status, email_sent_date,
+            whatsapp_status, whatsapp_sent_date,
+            call_status, call_sent_date, notes,
+            member_reaction, exit_poll_status,
+            emirate, district, assigned_to
+          ) VALUES (?, ?, ?, ?, ?, 'Pending', '', 'Pending', '', 'Not Called', '', '', 'Unknown', 'Pending', ?, ?, ?)
+        `, [sNo, accCode, name, mobile, email, emirate, district, assignedTo])
+          .then(() => {
+            newCount++;
+            processNext(index + 1);
+          })
+          .catch((insertErr) => {
+            console.error(`Error inserting ${accCode}:`, insertErr.message);
+            processNext(index + 1);
+          });
+      } else {
+        const updateFields = [];
+        const params = [];
+
+        if (dbMatch.account_name !== name && name !== '') {
+          updateFields.push("account_name = ?");
+          params.push(name);
+        }
+        if (dbMatch.mobile_number !== mobile && mobile !== '') {
+          updateFields.push("mobile_number = ?");
+          params.push(mobile);
+        }
+        if (dbMatch.email_id !== email && email !== '') {
+          updateFields.push("email_id = ?");
+          params.push(email);
+        }
+        if (dbMatch.emirate !== emirate && emirate !== '') {
+          updateFields.push("emirate = ?");
+          params.push(emirate);
+        }
+        if (dbMatch.district !== district && district !== '') {
+          updateFields.push("district = ?");
+          params.push(district);
+        }
+        if (dbMatch.assigned_to !== assignedTo && assignedTo !== '') {
+          updateFields.push("assigned_to = ?");
+          params.push(assignedTo);
+        }
+
+        if (updateFields.length > 0) {
+          params.push(accCode);
+          const updateQuery = `UPDATE contacts SET ${updateFields.join(', ')} WHERE acc_code = ?`;
+          dbRun(updateQuery, params)
+            .then(() => {
+              updateCount++;
+              processNext(index + 1);
+            })
+            .catch((updateErr) => {
+              console.error(`Error updating ${accCode}:`, updateErr.message);
+              processNext(index + 1);
+            });
+        } else {
+          processNext(index + 1);
+        }
+      }
+    })
+    .catch((err) => {
       console.error(`Error checking acc_code ${accCode}:`, err.message);
       processNext(index + 1);
-      return;
-    }
-
-    if (!dbMatch) {
-      // Insert new contact with default campaign statuses (no data loss)
-      db.run(`
-        INSERT INTO contacts (
-          s_no, acc_code, account_name, mobile_number, email_id,
-          email_status, email_sent_date,
-          whatsapp_status, whatsapp_sent_date,
-          call_status, call_sent_date, notes,
-          member_reaction, exit_poll_status,
-          emirate, district, assigned_to
-        ) VALUES (?, ?, ?, ?, ?, 'Pending', '', 'Pending', '', 'Not Called', '', '', 'Unknown', 'Pending', ?, ?, ?)
-      `, [sNo, accCode, name, mobile, email, emirate, district, assignedTo], (insertErr) => {
-        if (insertErr) {
-          console.error(`Error inserting ${accCode}:`, insertErr.message);
-        } else {
-          newCount++;
-        }
-        processNext(index + 1);
-      });
-    } else {
-      // Check if detail updates are needed
-      const updateFields = [];
-      const params = [];
-
-      if (dbMatch.account_name !== name && name !== '') {
-        updateFields.push("account_name = ?");
-        params.push(name);
-      }
-      if (dbMatch.mobile_number !== mobile && mobile !== '') {
-        updateFields.push("mobile_number = ?");
-        params.push(mobile);
-      }
-      if (dbMatch.email_id !== email && email !== '') {
-        updateFields.push("email_id = ?");
-        params.push(email);
-      }
-      if (dbMatch.emirate !== emirate && emirate !== '') {
-        updateFields.push("emirate = ?");
-        params.push(emirate);
-      }
-      if (dbMatch.district !== district && district !== '') {
-        updateFields.push("district = ?");
-        params.push(district);
-      }
-      if (dbMatch.assigned_to !== assignedTo && assignedTo !== '') {
-        updateFields.push("assigned_to = ?");
-        params.push(assignedTo);
-      }
-
-      if (updateFields.length > 0) {
-        params.push(accCode);
-        const updateQueryCorrected = `UPDATE contacts SET ${updateFields.join(', ')} WHERE acc_code = ?`;
-        
-        db.run(updateQueryCorrected, params, (updateErr) => {
-          if (updateErr) {
-            console.error(`Error updating ${accCode}:`, updateErr.message);
-          } else {
-            updateCount++;
-          }
-          processNext(index + 1);
-        });
-      } else {
-        processNext(index + 1);
-      }
-    }
-  });
+    });
 };
 
 // Start sequential processing

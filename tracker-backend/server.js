@@ -28,32 +28,29 @@ try {
 
 const dbPath = path.join(dbDir, 'database.sqlite');
 
-// Auto-initialize DB if it doesn't exist (e.g. fresh Railway Persistent Volume)
-if (!fs.existsSync(dbPath)) {
-  console.log('SQLite database file not found. Auto-initializing database...');
-  try {
-    let jsonPath = path.join(__dirname, 'contacts_data.json');
-    if (!fs.existsSync(jsonPath)) {
-      const fallbacks = [
-        path.join(__dirname, '../contacts_data.json'),
-        '/app/contacts_data.json'
-      ];
-      for (const p of fallbacks) {
-        if (fs.existsSync(p)) {
-          jsonPath = p;
-          break;
-        }
-      }
-    }
+const isPostgres = !!process.env.DATABASE_URL;
+let db = null;
+let pgPool = null;
 
-    if (fs.existsSync(jsonPath)) {
-      const contacts = JSON.parse(fs.readFileSync(jsonPath, 'utf8'));
-      const initDb = new sqlite3.Database(dbPath);
-      initDb.serialize(() => {
-        initDb.run(`CREATE TABLE IF NOT EXISTS contacts (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
+// Postgres Auto-Initialization helper
+const initPostgresDB = async () => {
+  try {
+    const checkTable = await pgPool.query(`
+      SELECT EXISTS (
+        SELECT FROM information_schema.tables 
+        WHERE table_schema = 'public' 
+        AND table_name = 'contacts'
+      )
+    `);
+    
+    const tableExists = checkTable.rows[0].exists;
+    if (!tableExists) {
+      console.log('PostgreSQL contacts table not found. Creating table and auto-initializing...');
+      await pgPool.query(`
+        CREATE TABLE contacts (
+          id SERIAL PRIMARY KEY,
           s_no INTEGER,
-          acc_code TEXT,
+          acc_code TEXT UNIQUE,
           account_name TEXT,
           mobile_number TEXT,
           email_id TEXT,
@@ -65,19 +62,32 @@ if (!fs.existsSync(dbPath)) {
           call_sent_date TEXT DEFAULT '',
           notes TEXT DEFAULT '',
           member_reaction TEXT DEFAULT 'Unknown',
-          exit_poll_status TEXT DEFAULT 'Pending'
-        )`);
-        
-        const stmt = initDb.prepare(`INSERT INTO contacts (
-          s_no, acc_code, account_name, mobile_number, email_id, 
-          email_status, email_sent_date, 
-          whatsapp_status, whatsapp_sent_date, 
-          call_status, call_sent_date, notes,
-          member_reaction, exit_poll_status
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
-        
+          exit_poll_status TEXT DEFAULT 'Pending',
+          emirate TEXT,
+          district TEXT,
+          assigned_to TEXT DEFAULT 'Unassigned'
+        )
+      `);
+      console.log('PostgreSQL contacts table created.');
+
+      // Import default contacts
+      let jsonPath = path.join(__dirname, 'contacts_data.json');
+      if (!fs.existsSync(jsonPath)) {
+        jsonPath = path.join(__dirname, '../contacts_data.json');
+      }
+      if (fs.existsSync(jsonPath)) {
+        const contacts = JSON.parse(fs.readFileSync(jsonPath, 'utf8'));
+        console.log(`Pre-seeding PostgreSQL with ${contacts.length} default records...`);
         for (const contact of contacts) {
-          stmt.run(
+          await pgPool.query(`
+            INSERT INTO contacts (
+              s_no, acc_code, account_name, mobile_number, email_id,
+              email_status, email_sent_date,
+              whatsapp_status, whatsapp_sent_date,
+              call_status, call_sent_date, notes,
+              member_reaction, exit_poll_status
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+          `, [
             contact.sNo || 0,
             contact.accCode || '',
             contact.name || '',
@@ -92,62 +102,199 @@ if (!fs.existsSync(dbPath)) {
             contact.callNotes || '',
             'Unknown',
             'Pending'
-          );
+          ]);
         }
-        stmt.finalize();
-      });
-      initDb.close();
-      console.log(`SQLite database successfully initialized with ${contacts.length} records.`);
+        console.log('PostgreSQL database successfully pre-seeded!');
+      } else {
+        console.warn('Warning: contacts_data.json not found for pre-seeding.');
+      }
     } else {
-      console.error('Error: contacts_data.json was not found in any search path.');
+      console.log('PostgreSQL contacts table is ready.');
+      try {
+        await pgPool.query("ALTER TABLE contacts ADD COLUMN IF NOT EXISTS emirate TEXT");
+        await pgPool.query("ALTER TABLE contacts ADD COLUMN IF NOT EXISTS district TEXT");
+        await pgPool.query("ALTER TABLE contacts ADD COLUMN IF NOT EXISTS assigned_to TEXT DEFAULT 'Unassigned'");
+      } catch (migrateErr) {
+        console.log("PostgreSQL schema migrations ran successfully.");
+      }
     }
-  } catch (dbErr) {
-    console.error('Failed to auto-initialize SQLite database:', dbErr.message);
+  } catch (err) {
+    console.error('Error during PostgreSQL auto-initialization:', err.message);
   }
+};
+
+if (isPostgres) {
+  const { Pool } = require('pg');
+  pgPool = new Pool({
+    connectionString: process.env.DATABASE_URL,
+    ssl: {
+      rejectUnauthorized: false
+    }
+  });
+  console.log('PostgreSQL configuration detected. Connecting to PostgreSQL...');
+  initPostgresDB();
+} else {
+  console.log('No DATABASE_URL environment variable detected. Defaulting to local SQLite setup...');
+  
+  // Auto-initialize DB if it doesn't exist (e.g. fresh Railway Persistent Volume)
+  if (!fs.existsSync(dbPath)) {
+    console.log('SQLite database file not found. Auto-initializing database...');
+    try {
+      let jsonPath = path.join(__dirname, 'contacts_data.json');
+      if (!fs.existsSync(jsonPath)) {
+        const fallbacks = [
+          path.join(__dirname, '../contacts_data.json'),
+          '/app/contacts_data.json'
+        ];
+        for (const p of fallbacks) {
+          if (fs.existsSync(p)) {
+            jsonPath = p;
+            break;
+          }
+        }
+      }
+
+      if (fs.existsSync(jsonPath)) {
+        const contacts = JSON.parse(fs.readFileSync(jsonPath, 'utf8'));
+        const initDb = new sqlite3.Database(dbPath);
+        initDb.serialize(() => {
+          initDb.run(`CREATE TABLE IF NOT EXISTS contacts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            s_no INTEGER,
+            acc_code TEXT,
+            account_name TEXT,
+            mobile_number TEXT,
+            email_id TEXT,
+            email_status TEXT DEFAULT 'Pending',
+            email_sent_date TEXT DEFAULT '',
+            whatsapp_status TEXT DEFAULT 'Pending',
+            whatsapp_sent_date TEXT DEFAULT '',
+            call_status TEXT DEFAULT 'Not Called',
+            call_sent_date TEXT DEFAULT '',
+            notes TEXT DEFAULT '',
+            member_reaction TEXT DEFAULT 'Unknown',
+            exit_poll_status TEXT DEFAULT 'Pending',
+            emirate TEXT,
+            district TEXT,
+            assigned_to TEXT DEFAULT 'Unassigned'
+          )`);
+          
+          const stmt = initDb.prepare(`INSERT INTO contacts (
+            s_no, acc_code, account_name, mobile_number, email_id, 
+            email_status, email_sent_date, 
+            whatsapp_status, whatsapp_sent_date, 
+            call_status, call_sent_date, notes,
+            member_reaction, exit_poll_status,
+            emirate, district, assigned_to
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+          
+          for (const contact of contacts) {
+            stmt.run(
+              contact.sNo || 0,
+              contact.accCode || '',
+              contact.name || '',
+              contact.mobile || '',
+              contact.email || '',
+              contact.emailStatus || 'Pending',
+              contact.emailSentDate || '',
+              contact.waStatus || 'Pending',
+              contact.waSentDate || '',
+              contact.callStatus || 'Not Called',
+              contact.callSentDate || '',
+              contact.callNotes || '',
+              'Unknown',
+              'Pending',
+              contact.emirate || '',
+              contact.district || '',
+              contact.assigned_to || 'Unassigned'
+            );
+          }
+          stmt.finalize();
+        });
+        initDb.close();
+        console.log(`SQLite database successfully initialized with ${contacts.length} records.`);
+      } else {
+        console.error('Error: contacts_data.json was not found in any search path.');
+      }
+    } catch (dbErr) {
+      console.error('Failed to auto-initialize SQLite database:', dbErr.message);
+    }
+  }
+
+  db = new sqlite3.Database(dbPath, (err) => {
+    if (err) {
+      console.error('Error connecting to SQLite database:', err.message);
+    } else {
+      console.log('Connected to SQLite database at:', dbPath);
+      // Run self-healing schema migrations on startup to add new columns if they are missing
+      db.serialize(() => {
+        db.run("ALTER TABLE contacts ADD COLUMN emirate TEXT", (alterErr) => {
+          if (alterErr && !alterErr.message.includes("duplicate column name")) {
+            console.error("Migration error adding emirate:", alterErr.message);
+          }
+        });
+        db.run("ALTER TABLE contacts ADD COLUMN district TEXT", (alterErr) => {
+          if (alterErr && !alterErr.message.includes("duplicate column name")) {
+            console.error("Migration error adding district:", alterErr.message);
+          }
+        });
+        db.run("ALTER TABLE contacts ADD COLUMN assigned_to TEXT DEFAULT 'Unassigned'", (alterErr) => {
+          if (alterErr && !alterErr.message.includes("duplicate column name")) {
+            console.error("Migration error adding assigned_to:", alterErr.message);
+          }
+        });
+      });
+    }
+  });
 }
 
-const db = new sqlite3.Database(dbPath, (err) => {
-  if (err) {
-    console.error('Error connecting to SQLite database:', err.message);
-  } else {
-    console.log('Connected to SQLite database at:', dbPath);
-    // Run self-healing schema migrations on startup to add new columns if they are missing
-    db.serialize(() => {
-      db.run("ALTER TABLE contacts ADD COLUMN emirate TEXT", (alterErr) => {
-        if (alterErr && !alterErr.message.includes("duplicate column name")) {
-          console.error("Migration error adding emirate:", alterErr.message);
-        }
-      });
-      db.run("ALTER TABLE contacts ADD COLUMN district TEXT", (alterErr) => {
-        if (alterErr && !alterErr.message.includes("duplicate column name")) {
-          console.error("Migration error adding district:", alterErr.message);
-        }
-      });
-      db.run("ALTER TABLE contacts ADD COLUMN assigned_to TEXT DEFAULT 'Unassigned'", (alterErr) => {
-        if (alterErr && !alterErr.message.includes("duplicate column name")) {
-          console.error("Migration error adding assigned_to:", alterErr.message);
-        }
-      });
-    });
-  }
-});
+// Convert SQLite '?' parameter placeholder to Postgres '$1, $2'
+const convertSql = (sql) => {
+  let converted = sql;
+  let index = 1;
+  converted = converted.replace(/\?/g, () => `$${index++}`);
+  return converted;
+};
 
 // Helper for query execution
 const query = (sql, params = []) => {
   return new Promise((resolve, reject) => {
-    db.all(sql, params, (err, rows) => {
-      if (err) reject(err);
-      else resolve(rows);
-    });
+    if (isPostgres) {
+      pgPool.query(convertSql(sql), params, (err, result) => {
+        if (err) reject(err);
+        else resolve(result.rows);
+      });
+    } else {
+      db.all(sql, params, (err, rows) => {
+        if (err) reject(err);
+        else resolve(rows);
+      });
+    }
   });
 };
 
 const run = (sql, params = []) => {
   return new Promise((resolve, reject) => {
-    db.run(sql, params, function (err) {
-      if (err) reject(err);
-      else resolve({ id: this.lastID, changes: this.changes });
-    });
+    if (isPostgres) {
+      let querySql = convertSql(sql);
+      let isInsert = querySql.trim().toUpperCase().startsWith('INSERT');
+      if (isInsert && !querySql.toUpperCase().includes('RETURNING')) {
+        querySql += ' RETURNING id';
+      }
+      pgPool.query(querySql, params, (err, result) => {
+        if (err) {
+          reject(err);
+        } else {
+          const lastID = isInsert && result.rows && result.rows[0] ? result.rows[0].id : null;
+          resolve({ id: lastID, changes: result.rowCount });
+        }
+      });
+    } else {
+      db.run(sql, params, function (err) {
+        if (err) reject(err);
+        else resolve({ id: this.lastID, changes: this.changes });
+      });
+    }
   });
 };
 

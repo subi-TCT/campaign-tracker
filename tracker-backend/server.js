@@ -515,9 +515,9 @@ app.get('/api/stats', async (req, res) => {
     const exitPollRows = await query('SELECT exit_poll_status, count(*) as count FROM contacts GROUP BY exit_poll_status');
 
     // Counts for TODAY
-    const [emailTodayRow] = await query('SELECT count(*) as count FROM contacts WHERE email_status = "Sent" AND email_sent_date = ?', [today]);
-    const [whatsappTodayRow] = await query('SELECT count(*) as count FROM contacts WHERE whatsapp_status = "Sent" AND whatsapp_sent_date = ?', [today]);
-    const [callTodayRow] = await query('SELECT count(*) as count FROM contacts WHERE call_status != "Not Called" AND call_sent_date = ?', [today]);
+    const [emailTodayRow] = await query('SELECT count(*) as count FROM contacts WHERE email_status = \'Sent\' AND email_sent_date = ?', [today]);
+    const [whatsappTodayRow] = await query('SELECT count(*) as count FROM contacts WHERE whatsapp_status = \'Sent\' AND whatsapp_sent_date = ?', [today]);
+    const [callTodayRow] = await query('SELECT count(*) as count FROM contacts WHERE call_status != \'Not Called\' AND call_sent_date = ?', [today]);
 
     // Emirate grouping
     const emirateRows = await query(`

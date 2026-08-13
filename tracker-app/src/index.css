@@ -1465,13 +1465,11 @@ body.light-theme select option {
   }
 
   /* Make editing log drawer full-width on mobile device */
-  .right-panel {
+  .drawer {
     width: 100% !important;
-    right: -100% !important;
-  }
-
-  .right-panel.open {
+    padding: 20px !important;
     right: 0 !important;
+    left: 0 !important;
   }
 
   /* Modal responsive scale */

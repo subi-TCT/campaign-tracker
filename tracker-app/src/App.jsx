@@ -435,21 +435,25 @@ export default function App() {
 
   const handleSaveDrawerDetails = async () => {
     if (!selectedContact) return;
-    await updateContact(selectedContact.id, {
-      account_name: selectedContact.account_name,
-      acc_code: selectedContact.acc_code,
-      mobile_number: selectedContact.mobile_number,
-      email_id: selectedContact.email_id,
-      email_status: selectedContact.email_status,
-      email_sent_date: selectedContact.email_sent_date,
-      whatsapp_status: selectedContact.whatsapp_status,
-      call_status: selectedContact.call_status,
-      call_sent_date: selectedContact.call_sent_date,
-      notes: selectedContact.notes,
-      member_reaction: selectedContact.member_reaction,
-      exit_poll_status: selectedContact.exit_poll_status
-    });
-    setIsDrawerOpen(false);
+    setIsDrawerOpen(false); // Close drawer immediately for instant feedback
+    try {
+      await updateContact(selectedContact.id, {
+        account_name: selectedContact.account_name,
+        acc_code: selectedContact.acc_code,
+        mobile_number: selectedContact.mobile_number,
+        email_id: selectedContact.email_id,
+        email_status: selectedContact.email_status,
+        email_sent_date: selectedContact.email_sent_date,
+        whatsapp_status: selectedContact.whatsapp_status,
+        call_status: selectedContact.call_status,
+        call_sent_date: selectedContact.call_sent_date,
+        notes: selectedContact.notes,
+        member_reaction: selectedContact.member_reaction,
+        exit_poll_status: selectedContact.exit_poll_status
+      });
+    } catch (err) {
+      console.error("Error saving drawer details:", err);
+    }
   };
 
   // Filter Contacts

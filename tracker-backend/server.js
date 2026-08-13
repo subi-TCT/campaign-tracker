@@ -2,6 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
+const xlsx = require('xlsx');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -683,6 +684,120 @@ app.get('/api/stats', async (req, res) => {
   }
 });
 
+const syncExcelDataOnStartup = async () => {
+  try {
+    let excelPath = path.join(__dirname, 'IAS Election Campaign Dashboard.xlsx');
+    if (!fs.existsSync(excelPath)) {
+      excelPath = path.join(__dirname, '../IAS Election Campaign Dashboard.xlsx');
+    }
+    
+    if (!fs.existsSync(excelPath)) {
+      console.log('Sync Excel file not found on startup.');
+      return;
+    }
+    
+    console.log('Starting automatic Excel to database sync on startup...');
+    const workbook = xlsx.readFile(excelPath);
+    const sheet = workbook.Sheets['Members'];
+    if (!sheet) {
+      console.log('Excel sheet "Members" not found.');
+      return;
+    }
+    
+    const rows = xlsx.utils.sheet_to_json(sheet, { range: 2 });
+    const activeRows = rows.filter(row => {
+      const iasId = String(row['IAS ID'] || '').trim().replace(/\.0$/, '');
+      return iasId && iasId !== 'undefined';
+    });
+    
+    console.log(`Processing ${activeRows.length} active records from Excel...`);
+    
+    const formatMobile = (mobileRaw) => {
+      if (!mobileRaw) return '';
+      const cleaned = String(mobileRaw).replace(/\D/g, '');
+      if (!cleaned) return '';
+      if (cleaned.startsWith('05')) return '971' + cleaned.substring(1);
+      if (cleaned.startsWith('5')) return '971' + cleaned;
+      return cleaned;
+    };
+
+    let newCount = 0;
+    let updateCount = 0;
+
+    for (const row of activeRows) {
+      const iasId = String(row['IAS ID'] || '').trim().replace(/\.0$/, '');
+      const type = String(row['Type'] || '').trim();
+      const accCode = `${type}${iasId}`;
+      
+      const name = String(row['Member Name'] || '').trim();
+      const mobile = formatMobile(row['Mobile (UAE)']);
+      const email = String(row['Email'] || '').trim();
+      const sNo = String(row['S.No'] || '').trim().replace(/\.0$/, '');
+      
+      const emirate = String(row['Emirate'] || '').trim();
+      const district = String(row['District'] || '').trim();
+      const assignedTo = String(row['Assigned To'] || 'Unassigned').trim();
+
+      const dbMatch = await query("SELECT id, account_name, mobile_number, email_id, emirate, district, assigned_to FROM contacts WHERE acc_code = ?", [accCode]);
+      
+      if (dbMatch.length === 0) {
+        await run(`
+          INSERT INTO contacts (
+            s_no, acc_code, account_name, mobile_number, email_id,
+            email_status, email_sent_date,
+            whatsapp_status, whatsapp_sent_date,
+            call_status, call_sent_date, notes,
+            member_reaction, exit_poll_status,
+            emirate, district, assigned_to
+          ) VALUES (?, ?, ?, ?, ?, 'Pending', '', 'Pending', '', 'Not Called', '', '', 'Unknown', 'Pending', ?, ?, ?)
+        `, [sNo, accCode, name, mobile, email, emirate, district, assignedTo]);
+        newCount++;
+      } else {
+        const match = dbMatch[0];
+        const updateFields = [];
+        const params = [];
+
+        if (match.account_name !== name && name !== '') {
+          updateFields.push("account_name = ?");
+          params.push(name);
+        }
+        if (match.mobile_number !== mobile && mobile !== '') {
+          updateFields.push("mobile_number = ?");
+          params.push(mobile);
+        }
+        if (match.email_id !== email && email !== '') {
+          updateFields.push("email_id = ?");
+          params.push(email);
+        }
+        if (match.emirate !== emirate && emirate !== '') {
+          updateFields.push("emirate = ?");
+          params.push(emirate);
+        }
+        if (match.district !== district && district !== '') {
+          updateFields.push("district = ?");
+          params.push(district);
+        }
+        if (match.assigned_to !== assignedTo && assignedTo !== '') {
+          updateFields.push("assigned_to = ?");
+          params.push(assignedTo);
+        }
+
+        if (updateFields.length > 0) {
+          params.push(accCode);
+          await run(`UPDATE contacts SET ${updateFields.join(', ')} WHERE acc_code = ?`, params);
+          updateCount++;
+        }
+      }
+    }
+    
+    console.log(`Auto Excel Sync complete on startup: ${newCount} added, ${updateCount} updated.`);
+  } catch (syncErr) {
+    console.error('Error during startup Excel sync:', syncErr.message);
+  }
+};
+
 app.listen(PORT, () => {
   console.log(`Campaign Tracker Backend listening on http://localhost:${PORT}`);
+  // Run automatic Excel data sync on boot
+  syncExcelDataOnStartup();
 });

@@ -45,12 +45,12 @@ const initPostgresDB = async () => {
     
     const tableExists = checkTable.rows[0].exists;
     if (!tableExists) {
-      console.log('PostgreSQL contacts table not found. Creating table and auto-initializing...');
+      console.log('PostgreSQL contacts table not found. Creating table...');
       await pgPool.query(`
         CREATE TABLE contacts (
           id SERIAL PRIMARY KEY,
           s_no INTEGER,
-          acc_code TEXT UNIQUE,
+          acc_code TEXT,
           account_name TEXT,
           mobile_number TEXT,
           email_id TEXT,
@@ -69,8 +69,27 @@ const initPostgresDB = async () => {
         )
       `);
       console.log('PostgreSQL contacts table created.');
+    } else {
+      console.log('PostgreSQL contacts table is ready.');
+      try {
+        await pgPool.query("ALTER TABLE contacts DROP CONSTRAINT IF EXISTS contacts_acc_code_key");
+      } catch (e) {
+        console.log("Unique constraint contacts_acc_code_key drop attempted.");
+      }
+      try {
+        await pgPool.query("ALTER TABLE contacts ADD COLUMN IF NOT EXISTS emirate TEXT");
+        await pgPool.query("ALTER TABLE contacts ADD COLUMN IF NOT EXISTS district TEXT");
+        await pgPool.query("ALTER TABLE contacts ADD COLUMN IF NOT EXISTS assigned_to TEXT DEFAULT 'Unassigned'");
+      } catch (migrateErr) {
+        console.log("PostgreSQL schema migrations ran successfully.");
+      }
+    }
 
-      // Import default contacts
+    // Verify row count to decide on pre-seeding
+    const countRes = await pgPool.query("SELECT count(*) FROM contacts");
+    const rowCount = parseInt(countRes.rows[0].count, 10);
+    
+    if (rowCount === 0) {
       let jsonPath = path.join(__dirname, 'contacts_data.json');
       if (!fs.existsSync(jsonPath)) {
         jsonPath = path.join(__dirname, '../contacts_data.json');
@@ -123,15 +142,6 @@ const initPostgresDB = async () => {
         console.log('PostgreSQL database successfully pre-seeded!');
       } else {
         console.warn('Warning: contacts_data.json not found for pre-seeding.');
-      }
-    } else {
-      console.log('PostgreSQL contacts table is ready.');
-      try {
-        await pgPool.query("ALTER TABLE contacts ADD COLUMN IF NOT EXISTS emirate TEXT");
-        await pgPool.query("ALTER TABLE contacts ADD COLUMN IF NOT EXISTS district TEXT");
-        await pgPool.query("ALTER TABLE contacts ADD COLUMN IF NOT EXISTS assigned_to TEXT DEFAULT 'Unassigned'");
-      } catch (migrateErr) {
-        console.log("PostgreSQL schema migrations ran successfully.");
       }
     }
   } catch (err) {
@@ -515,9 +525,9 @@ app.get('/api/stats', async (req, res) => {
     const exitPollRows = await query('SELECT exit_poll_status, count(*) as count FROM contacts GROUP BY exit_poll_status');
 
     // Counts for TODAY
-    const [emailTodayRow] = await query('SELECT count(*) as count FROM contacts WHERE email_status = "Sent" AND email_sent_date = ?', [today]);
-    const [whatsappTodayRow] = await query('SELECT count(*) as count FROM contacts WHERE whatsapp_status = "Sent" AND whatsapp_sent_date = ?', [today]);
-    const [callTodayRow] = await query('SELECT count(*) as count FROM contacts WHERE call_status != "Not Called" AND call_sent_date = ?', [today]);
+    const [emailTodayRow] = await query("SELECT count(*) as count FROM contacts WHERE email_status = 'Sent' AND email_sent_date = ?", [today]);
+    const [whatsappTodayRow] = await query("SELECT count(*) as count FROM contacts WHERE whatsapp_status = 'Sent' AND whatsapp_sent_date = ?", [today]);
+    const [callTodayRow] = await query("SELECT count(*) as count FROM contacts WHERE call_status != 'Not Called' AND call_sent_date = ?", [today]);
 
     // Emirate grouping
     const emirateRows = await query(`

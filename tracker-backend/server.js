@@ -313,6 +313,21 @@ const initPostgresDB = async () => {
 
     // Run Excel synchronization once database table and seeding are fully completed
     await syncExcelDataOnStartup();
+
+    // Create volunteers table and auto-seed from contacts
+    await pgPool.query(`
+      CREATE TABLE IF NOT EXISTS volunteers (
+        id SERIAL PRIMARY KEY,
+        name TEXT UNIQUE NOT NULL
+      )
+    `);
+    await pgPool.query(`
+      INSERT INTO volunteers (name)
+      SELECT DISTINCT assigned_to FROM contacts
+      WHERE assigned_to IS NOT NULL AND assigned_to != '' AND assigned_to != 'Unassigned'
+      ON CONFLICT (name) DO NOTHING
+    `);
+    console.log('PostgreSQL volunteers table ready and seeded.');
   } catch (err) {
     console.error('Error during PostgreSQL auto-initialization:', err.message);
   }
@@ -445,11 +460,94 @@ if (isPostgres) {
           }
         });
         // Run Excel sync on SQLite startup after schema migrations finish
-        syncExcelDataOnStartup();
+        syncExcelDataOnStartup().then(() => {
+          db.serialize(() => {
+            db.run(`CREATE TABLE IF NOT EXISTS volunteers (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              name TEXT UNIQUE NOT NULL
+            )`, (err) => {
+              if (err) console.error("Error creating SQLite volunteers table:", err.message);
+            });
+            db.run(`INSERT OR IGNORE INTO volunteers (name)
+              SELECT DISTINCT assigned_to FROM contacts
+              WHERE assigned_to IS NOT NULL AND assigned_to != '' AND assigned_to != 'Unassigned'`, (err) => {
+                if (err) console.error("Error seeding SQLite volunteers table:", err.message);
+                else console.log("SQLite volunteers table ready and seeded.");
+              });
+          });
+        }).catch(err => {
+          console.error("Error during SQLite startup Excel sync and volunteer seeding:", err.message);
+        });
       });
     }
   });
 }
+
+// GET all volunteers
+app.get('/api/volunteers', async (req, res) => {
+  try {
+    const list = await query("SELECT name FROM volunteers ORDER BY name ASC");
+    res.json(list.map(r => r.name));
+  } catch (error) {
+    console.error('Error fetching volunteers:', error);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+// POST add a volunteer
+app.post('/api/volunteers', async (req, res) => {
+  const { name } = req.body;
+  if (!name || !name.trim()) {
+    return res.status(400).json({ error: 'Volunteer name is required' });
+  }
+  const cleanName = name.trim();
+  try {
+    const match = await query("SELECT id FROM volunteers WHERE name = ?", [cleanName]);
+    if (match.length > 0) {
+      return res.status(400).json({ error: 'Volunteer name already exists' });
+    }
+    await run("INSERT INTO volunteers (name) VALUES (?)", [cleanName]);
+    res.status(201).json({ success: true, name: cleanName });
+  } catch (error) {
+    console.error('Error adding volunteer:', error);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+// DELETE a volunteer
+app.delete('/api/volunteers/:name', async (req, res) => {
+  const { name } = req.params;
+  try {
+    await run("DELETE FROM volunteers WHERE name = ?", [name]);
+    await run("UPDATE contacts SET assigned_to = 'Unassigned' WHERE assigned_to = ?", [name]);
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Error deleting volunteer:', error);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+// POST bulk assign contacts to volunteer
+app.post('/api/contacts/bulk-assign', async (req, res) => {
+  const { ids, assigned_to } = req.body;
+  if (!Array.isArray(ids) || ids.length === 0) {
+    return res.status(400).json({ error: 'Invalid ids array' });
+  }
+  const volunteerName = assigned_to || 'Unassigned';
+  try {
+    const placeholders = ids.map(() => '?').join(',');
+    const sql = `
+      UPDATE contacts 
+      SET assigned_to = ?
+      WHERE id IN (${placeholders})
+    `;
+    const result = await run(sql, [volunteerName, ...ids]);
+    res.json({ success: true, updated: result.changes });
+  } catch (error) {
+    console.error('Error in bulk volunteer assign:', error);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
 
 // GET all contacts
 app.get('/api/contacts', async (req, res) => {

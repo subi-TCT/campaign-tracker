@@ -64,6 +64,12 @@ export default function App() {
   const [sentimentFilter, setSentimentFilter] = useState('All');
   const [statusFilter, setStatusFilter] = useState('Active');
 
+  // Volunteer management states
+  const [volunteers, setVolunteers] = useState([]);
+  const [showVolunteerModal, setShowVolunteerModal] = useState(false);
+  const [newVolunteerName, setNewVolunteerName] = useState('');
+  const [selectedVolunteerDetail, setSelectedVolunteerDetail] = useState(null);
+
   // Selection for bulk actions
   const [selectedContactIds, setSelectedContactIds] = useState([]);
   
@@ -152,8 +158,86 @@ export default function App() {
     }
   };
 
+  const fetchVolunteers = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/volunteers`);
+      if (res.ok) {
+        const data = await res.json();
+        setVolunteers(data);
+      }
+    } catch (err) {
+      console.error('Error fetching volunteers list:', err);
+    }
+  };
+
+  const handleAddVolunteer = async () => {
+    if (!newVolunteerName || !newVolunteerName.trim()) return;
+    try {
+      const res = await fetch(`${API_BASE}/volunteers`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: newVolunteerName.trim() })
+      });
+      if (res.ok) {
+        setNewVolunteerName('');
+        await fetchVolunteers();
+      } else {
+        const errData = await res.json();
+        alert(errData.error || 'Failed to add volunteer');
+      }
+    } catch (err) {
+      console.error(err);
+      alert('Error adding volunteer');
+    }
+  };
+
+  const handleDeleteVolunteer = async (name) => {
+    if (!window.confirm(`Are you sure you want to delete volunteer "${name}"? This will reset all their assigned contacts to Unassigned.`)) {
+      return;
+    }
+    try {
+      const res = await fetch(`${API_BASE}/volunteers/${encodeURIComponent(name)}`, {
+        method: 'DELETE'
+      });
+      if (res.ok) {
+        await fetchVolunteers();
+        await fetchData(); // Refresh contacts to show Unassigned changes
+      } else {
+        alert('Failed to delete volunteer');
+      }
+    } catch (err) {
+      console.error(err);
+      alert('Error deleting volunteer');
+    }
+  };
+
+  const handleBulkAssignVolunteers = async (volunteerName) => {
+    if (selectedContactIds.length === 0) return;
+    try {
+      const res = await fetch(`${API_BASE}/contacts/bulk-assign`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ids: selectedContactIds,
+          assigned_to: volunteerName
+        })
+      });
+      if (res.ok) {
+        setSelectedContactIds([]);
+        await fetchData();
+        alert(`Successfully assigned ${selectedContactIds.length} contacts to ${volunteerName}!`);
+      } else {
+        alert('Failed to assign contacts.');
+      }
+    } catch (err) {
+      console.error(err);
+      alert('Error assigning contacts.');
+    }
+  };
+
   useEffect(() => {
     fetchData();
+    fetchVolunteers();
   }, []);
 
   // Countdown timer effect
@@ -188,6 +272,7 @@ export default function App() {
   const selectTab = (tabName, searchReset = false) => {
     setActiveTab(tabName);
     setMobileMenuOpen(false);
+    setSelectedVolunteerDetail(null);
     if (searchReset) {
       setCurrentPage(1);
       setSearchQuery('');
@@ -452,7 +537,8 @@ export default function App() {
         notes: selectedContact.notes,
         member_reaction: selectedContact.member_reaction,
         exit_poll_status: selectedContact.exit_poll_status,
-        account_status: selectedContact.account_status
+        account_status: selectedContact.account_status,
+        assigned_to: selectedContact.assigned_to
       });
     } catch (err) {
       console.error("Error saving drawer details:", err);
@@ -696,6 +782,12 @@ export default function App() {
               <button className={`nav-link ${activeTab === 'database' ? 'active' : ''}`} onClick={() => selectTab('database', true)}>
                 <FileText size={18} />
                 Master Database
+              </button>
+            </li>
+            <li className="nav-item">
+              <button className={`nav-link ${activeTab === 'volunteers' ? 'active' : ''}`} onClick={() => selectTab('volunteers', true)}>
+                <Users size={18} />
+                Campaign Volunteers
               </button>
             </li>
             <li className="nav-item">
@@ -1938,6 +2030,9 @@ export default function App() {
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
                 <h2 className="tab-title">Master Contacts Database</h2>
                 <div style={{ display: 'flex', gap: 12 }}>
+                  <button className="btn warning" onClick={() => selectTab('volunteers', true)} style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                    <Users size={16} /> Manage Volunteers
+                  </button>
                   <button className="btn success" onClick={() => setShowAddModal(true)}>
                     <Plus size={16} /> Add Contact
                   </button>
@@ -1960,6 +2055,30 @@ export default function App() {
                   />
                 </div>
                 <div className="filters-wrapper">
+                  {selectedContactIds.length > 0 && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'rgba(245, 158, 11, 0.1)', border: '1px solid rgba(245, 158, 11, 0.3)', padding: '4px 10px', borderRadius: 6 }}>
+                      <span style={{ fontSize: 12, color: 'var(--color-text-white)', fontWeight: 600 }}>
+                        {selectedContactIds.length} Selected
+                      </span>
+                      <select 
+                        className="filter-select"
+                        style={{ padding: '4px 8px', fontSize: 12, height: 'auto', border: '1px solid var(--border-color)', margin: 0 }}
+                        defaultValue=""
+                        onChange={(e) => {
+                          if (e.target.value) {
+                            handleBulkAssignVolunteers(e.target.value);
+                            e.target.value = "";
+                          }
+                        }}
+                      >
+                        <option value="" disabled>Assign to...</option>
+                        <option value="Unassigned">Unassigned</option>
+                        {volunteers.map(name => (
+                          <option key={name} value={name}>{name}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
                   <select 
                     className="filter-select" 
                     value={statusFilter} 
@@ -1989,6 +2108,13 @@ export default function App() {
                 <table className="contacts-table">
                   <thead>
                     <tr>
+                      <th style={{ width: 40 }}>
+                        <input 
+                          type="checkbox" 
+                          onChange={toggleSelectAll} 
+                          checked={paginatedContacts.length > 0 && paginatedContacts.every(c => selectedContactIds.includes(c.id))} 
+                        />
+                      </th>
                       <th>S.No</th>
                       <th>Code</th>
                       <th>Account Name</th>
@@ -2005,6 +2131,13 @@ export default function App() {
                     {paginatedContacts.length > 0 ? (
                       paginatedContacts.map((contact) => (
                         <tr key={contact.id}>
+                          <td>
+                            <input 
+                              type="checkbox" 
+                              checked={selectedContactIds.includes(contact.id)} 
+                              onChange={() => toggleContactSelect(contact.id)} 
+                            />
+                          </td>
                           <td>{contact.s_no}</td>
                           <td>{contact.acc_code}</td>
                           <td style={{ fontWeight: 600, color: 'var(--color-text-white)' }}>
@@ -2040,7 +2173,7 @@ export default function App() {
                       ))
                     ) : (
                       <tr>
-                        <td colSpan="10" style={{ textAlign: 'center', padding: 32, color: 'var(--color-text-muted)' }}>No contacts found matching selection.</td>
+                        <td colSpan="11" style={{ textAlign: 'center', padding: 32, color: 'var(--color-text-muted)' }}>No contacts found matching selection.</td>
                       </tr>
                     )}
                   </tbody>
@@ -2131,6 +2264,241 @@ export default function App() {
                     </button>
                   </div>
                 </div>
+              </div>
+            </div>
+          )}
+
+          {/* ==================== VOLUNTEERS TAB ==================== */}
+          {activeTab === 'volunteers' && (
+            <div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
+                <h2 className="tab-title">Campaign Volunteers Dashboard</h2>
+                <span style={{ fontSize: 13, color: 'var(--color-text-secondary)', background: 'rgba(99, 102, 241, 0.1)', border: '1px solid rgba(99, 102, 241, 0.2)', padding: '4px 12px', borderRadius: 6, fontWeight: 600 }}>
+                  Caller Command Center
+                </span>
+              </div>
+
+              {/* Volunteers Overview Stats Grid */}
+              <div className="stats-grid" style={{ marginBottom: 24 }}>
+                <div className="stat-card">
+                  <div className="stat-header"><span>Registered Helpers</span></div>
+                  <div className="stat-value" style={{ color: '#fbbf24' }}>{volunteers.length}</div>
+                  <div className="stat-desc">Total callers in database</div>
+                </div>
+                <div className="stat-card">
+                  <div className="stat-header"><span>Active Assigned Workload</span></div>
+                  <div className="stat-value" style={{ color: '#3b82f6' }}>{(() => {
+                    let totalWorkload = 0;
+                    volunteers.forEach(name => {
+                      totalWorkload += contacts.filter(c => c.assigned_to === name && c.account_status !== 'Inactive').length;
+                    });
+                    return totalWorkload;
+                  })()}</div>
+                  <div className="stat-desc">Total voters allocated to callers</div>
+                </div>
+                <div className="stat-card">
+                  <div className="stat-header"><span>Workload Progress</span></div>
+                  <div className="stat-value" style={{ color: '#10b981' }}>{(() => {
+                    let totalWorkload = 0;
+                    let completedCalls = 0;
+                    volunteers.forEach(name => {
+                      const assigned = contacts.filter(c => c.assigned_to === name && c.account_status !== 'Inactive');
+                      totalWorkload += assigned.length;
+                      completedCalls += assigned.filter(c => c.call_status !== 'Not Called').length;
+                    });
+                    return totalWorkload > 0 ? Math.round((completedCalls / totalWorkload) * 100) : 0;
+                  })()}%</div>
+                  <div className="stat-desc">{(() => {
+                    let totalWorkload = 0;
+                    let completedCalls = 0;
+                    volunteers.forEach(name => {
+                      const assigned = contacts.filter(c => c.assigned_to === name && c.account_status !== 'Inactive');
+                      totalWorkload += assigned.length;
+                      completedCalls += assigned.filter(c => c.call_status !== 'Not Called').length;
+                    });
+                    return `${completedCalls} of ${totalWorkload}`;
+                  })()} calls complete</div>
+                </div>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: selectedVolunteerDetail ? '1fr 1.3fr' : '1fr', gap: 24, transition: 'all 0.3s ease' }}>
+                
+                {/* Volunteers Directory Column */}
+                <div className="glass-panel" style={{ padding: 20 }}>
+                  <h3 className="panel-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+                    <span>Helper Directory</span>
+                    <span style={{ fontSize: 11, background: 'rgba(255,255,255,0.05)', padding: '2px 8px', borderRadius: 4, color: 'var(--color-text-muted)' }}>
+                      Click volunteer to view workload
+                    </span>
+                  </h3>
+
+                  {/* Add Helper Inline Form */}
+                  <div style={{ display: 'flex', gap: 8, marginBottom: 20 }}>
+                    <input 
+                      type="text" 
+                      className="drawer-input" 
+                      placeholder="Add external or internal volunteer..." 
+                      value={newVolunteerName}
+                      onChange={(e) => setNewVolunteerName(e.target.value)}
+                      style={{ margin: 0, height: 38, fontSize: 13 }}
+                    />
+                    <button className="btn success" onClick={handleAddVolunteer} style={{ height: 38, padding: '0 16px', fontSize: 13, whiteSpace: 'nowrap' }}>
+                      <Plus size={14} /> Add Helper
+                    </button>
+                  </div>
+
+                  {/* Directory Table */}
+                  <div className="table-wrapper" style={{ overflowY: 'auto', maxHeight: 450 }}>
+                    <table className="contacts-table" style={{ fontSize: 13 }}>
+                      <thead>
+                        <tr>
+                          <th>Helper Name</th>
+                          <th style={{ textAlign: 'center' }}>Workload</th>
+                          <th style={{ textAlign: 'center' }}>Progress</th>
+                          <th style={{ textAlign: 'center' }}>Success</th>
+                          <th style={{ textAlign: 'right' }}>Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {volunteers.length > 0 ? (
+                          volunteers.map((name) => {
+                            const assigned = contacts.filter(c => c.assigned_to === name && c.account_status !== 'Inactive');
+                            const workload = assigned.length;
+                            const done = assigned.filter(c => c.call_status !== 'Not Called').length;
+                            const rate = workload > 0 ? Math.round((done / workload) * 100) : 0;
+                            const positive = assigned.filter(c => c.member_reaction === 'Strong Support (Panel)' || c.member_reaction === 'Leaning Support (Anil Kumar only)').length;
+                            const success = done > 0 ? Math.round((positive / done) * 100) : 0;
+
+                            return (
+                              <tr 
+                                key={name} 
+                                onClick={() => setSelectedVolunteerDetail(name)}
+                                style={{ 
+                                  cursor: 'pointer', 
+                                  background: selectedVolunteerDetail === name ? 'rgba(99, 102, 241, 0.08)' : '',
+                                  borderLeft: selectedVolunteerDetail === name ? '3px solid #6366f1' : ''
+                                }}
+                              >
+                                <td style={{ fontWeight: 600, color: 'var(--color-text-white)' }}>{name}</td>
+                                <td style={{ textAlign: 'center', color: '#60a5fa' }}>{workload}</td>
+                                <td style={{ textAlign: 'center' }}>
+                                  <span style={{ fontWeight: 600, color: rate > 70 ? '#34d399' : rate > 30 ? '#fbbf24' : 'var(--color-text-muted)' }}>
+                                    {rate}%
+                                  </span>
+                                  <span style={{ fontSize: 10, color: 'var(--color-text-muted)', marginLeft: 4 }}>({done}/{workload})</span>
+                                </td>
+                                <td style={{ textAlign: 'center', color: '#10b981', fontWeight: 600 }}>{success}%</td>
+                                <td style={{ textAlign: 'right' }} onClick={(e) => e.stopPropagation()}>
+                                  <button 
+                                    className="action-btn"
+                                    style={{ color: '#ef4444' }}
+                                    title="Delete Helper"
+                                    onClick={() => handleDeleteVolunteer(name)}
+                                  >
+                                    <X size={16} />
+                                  </button>
+                                </td>
+                              </tr>
+                            );
+                          })
+                        ) : (
+                          <tr>
+                            <td colSpan="5" style={{ textAlign: 'center', padding: 24, color: 'var(--color-text-muted)' }}>
+                              No volunteers registered yet. Add a helper above.
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                {/* Inspect Workload Drill-Down Column */}
+                {selectedVolunteerDetail && (
+                  <div className="glass-panel" style={{ padding: 20 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, borderBottom: '1px solid var(--border-color)', paddingBottom: 12 }}>
+                      <div>
+                        <h3 className="panel-title" style={{ marginBottom: 2 }}>
+                          Workload: <span style={{ color: '#fbbf24' }}>{selectedVolunteerDetail}</span>
+                        </h3>
+                        <span style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
+                          Voters assigned: {contacts.filter(c => c.assigned_to === selectedVolunteerDetail && c.account_status !== 'Inactive').length}
+                        </span>
+                      </div>
+                      <button className="close-btn" style={{ padding: 4 }} onClick={() => setSelectedVolunteerDetail(null)}>×</button>
+                    </div>
+
+                    <div className="table-wrapper" style={{ overflowY: 'auto', maxHeight: 440 }}>
+                      <table className="contacts-table" style={{ fontSize: 12 }}>
+                        <thead>
+                          <tr>
+                            <th>S.No</th>
+                            <th>Voter Name</th>
+                            <th>Call Status</th>
+                            <th>Sentiment</th>
+                            <th style={{ textAlign: 'right' }}>Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {(() => {
+                            const assignedVoters = contacts.filter(c => c.assigned_to === selectedVolunteerDetail && c.account_status !== 'Inactive');
+                            return assignedVoters.length > 0 ? (
+                              assignedVoters.map((contact) => (
+                                <tr key={contact.id}>
+                                  <td>{contact.s_no}</td>
+                                  <td style={{ fontWeight: 600, color: 'var(--color-text-white)' }}>{contact.account_name}</td>
+                                  <td>
+                                    <span className={`status-badge ${contact.call_status.toLowerCase().replace(' ', '-')}`}>
+                                      {contact.call_status}
+                                    </span>
+                                  </td>
+                                  <td>
+                                    {contact.member_reaction && contact.member_reaction !== 'Unknown' ? (
+                                      <span style={{ fontSize: 11, fontWeight: 600, color: SENTIMENT_META[Object.keys(SENTIMENT_META).find(k => SENTIMENT_META[k].label === contact.member_reaction)]?.color }}>
+                                        {contact.member_reaction.split(' (')[0]}
+                                      </span>
+                                    ) : (
+                                      <span style={{ color: 'var(--color-text-muted)' }}>—</span>
+                                    )}
+                                  </td>
+                                  <td style={{ textAlign: 'right' }}>
+                                    <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+                                      <button 
+                                        className="action-btn"
+                                        title="Log Notes"
+                                        onClick={() => handleOpenDrawer(contact)}
+                                      >
+                                        <Edit2 size={14} />
+                                      </button>
+                                      <button 
+                                        className="action-btn"
+                                        style={{ color: '#ef4444' }}
+                                        title="Unassign Voter"
+                                        onClick={async () => {
+                                          if (window.confirm(`Unassign "${contact.account_name}" from caller "${selectedVolunteerDetail}"?`)) {
+                                            await updateContact(contact.id, { assigned_to: 'Unassigned' });
+                                          }
+                                        }}
+                                      >
+                                        <X size={14} />
+                                      </button>
+                                    </div>
+                                  </td>
+                                </tr>
+                              ))
+                            ) : (
+                              <tr>
+                                <td colSpan="5" style={{ textAlign: 'center', padding: 24, color: 'var(--color-text-muted)' }}>
+                                  No active voters currently assigned to this helper.
+                                </td>
+                              </tr>
+                            );
+                          })()}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -2293,6 +2661,19 @@ export default function App() {
                 >
                   <option value="Active">Active (Included in campaigns)</option>
                   <option value="Inactive">Inactive (Excluded from lists & stats)</option>
+                </select>
+              </div>
+              <div className="drawer-field">
+                <span className="drawer-label">Assigned Volunteer</span>
+                <select 
+                  className="drawer-input"
+                  value={selectedContact.assigned_to || 'Unassigned'}
+                  onChange={(e) => setSelectedContact(prev => ({ ...prev, assigned_to: e.target.value }))}
+                >
+                  <option value="Unassigned">Unassigned</option>
+                  {volunteers.map(name => (
+                    <option key={name} value={name}>{name}</option>
+                  ))}
                 </select>
               </div>
             </div>
@@ -2677,6 +3058,87 @@ export default function App() {
                 </div>
               </div>
             )}
+          </div>
+        </div>
+      )}
+      {/* ==================== VOLUNTEER MANAGEMENT MODAL ==================== */}
+      {showVolunteerModal && (
+        <div className="modal-backdrop" onClick={() => { setShowVolunteerModal(false); }}>
+          <div className="modal" style={{ maxWidth: '500px', width: '95%', background: 'var(--bg-modal)' }} onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header" style={{ borderBottom: '1px solid var(--border-color)', paddingBottom: 12, marginBottom: 16 }}>
+              <h3 className="drawer-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <Users size={20} color="#fbbf24" /> Manage Campaign Volunteers
+              </h3>
+              <button className="close-btn" onClick={() => { setShowVolunteerModal(false); }}><X size={20} /></button>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+              {/* Add Volunteer Form */}
+              <div style={{ display: 'flex', gap: 8 }}>
+                <input 
+                  type="text" 
+                  className="drawer-input" 
+                  placeholder="Enter volunteer's name (e.g. Suresh Kumar)..." 
+                  value={newVolunteerName}
+                  onChange={(e) => setNewVolunteerName(e.target.value)}
+                  style={{ margin: 0, height: 40 }}
+                />
+                <button className="btn success" onClick={handleAddVolunteer} style={{ height: 40, whiteSpace: 'nowrap' }}>
+                  <Plus size={16} /> Add Helper
+                </button>
+              </div>
+
+              {/* Volunteers List */}
+              <div>
+                <h4 style={{ fontSize: 13, color: 'var(--color-text-muted)', marginBottom: 8 }}>Registered Volunteers ({volunteers.length})</h4>
+                <div style={{ maxHeight: '250px', overflowY: 'auto', background: 'rgba(0,0,0,0.15)', border: '1px solid var(--border-color)', borderRadius: 8, padding: 4 }}>
+                  {volunteers.length > 0 ? (
+                    volunteers.map((name) => (
+                      <div 
+                        key={name} 
+                        style={{ 
+                          display: 'flex', 
+                          justifyContent: 'space-between', 
+                          alignItems: 'center', 
+                          padding: '10px 12px', 
+                          borderBottom: '1px solid rgba(255,255,255,0.05)',
+                          borderRadius: 4
+                        }}
+                      >
+                        <span style={{ fontWeight: 600, color: 'var(--color-text-white)' }}>{name}</span>
+                        <button 
+                          onClick={() => handleDeleteVolunteer(name)} 
+                          style={{ 
+                            background: 'transparent', 
+                            border: 'none', 
+                            color: '#ef4444', 
+                            cursor: 'pointer', 
+                            padding: '4px 8px', 
+                            borderRadius: '4px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center'
+                          }}
+                          title="Remove Volunteer"
+                        >
+                          <X size={16} />
+                        </button>
+                      </div>
+                    ))
+                  ) : (
+                    <div style={{ padding: 24, textAlign: 'center', color: 'var(--color-text-muted)', fontSize: 13 }}>
+                      No volunteers registered yet. Add one above!
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', borderTop: '1px solid var(--border-color)', paddingTop: 12 }}>
+                <button className="btn" onClick={() => setShowVolunteerModal(false)}>
+                  Close Window
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}

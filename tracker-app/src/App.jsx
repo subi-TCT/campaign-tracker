@@ -62,6 +62,7 @@ export default function App() {
   const [whatsappFilter, setWhatsappFilter] = useState('All');
   const [qualityFilter, setQualityFilter] = useState('All');
   const [sentimentFilter, setSentimentFilter] = useState('All');
+  const [statusFilter, setStatusFilter] = useState('Active');
 
   // Selection for bulk actions
   const [selectedContactIds, setSelectedContactIds] = useState([]);
@@ -191,6 +192,7 @@ export default function App() {
       setCurrentPage(1);
       setSearchQuery('');
       setSentimentFilter('All');
+      setStatusFilter('Active');
     }
   };
 
@@ -449,7 +451,8 @@ export default function App() {
         call_sent_date: selectedContact.call_sent_date,
         notes: selectedContact.notes,
         member_reaction: selectedContact.member_reaction,
-        exit_poll_status: selectedContact.exit_poll_status
+        exit_poll_status: selectedContact.exit_poll_status,
+        account_status: selectedContact.account_status
       });
     } catch (err) {
       console.error("Error saving drawer details:", err);
@@ -459,6 +462,18 @@ export default function App() {
   // Filter Contacts
   const getFilteredContacts = () => {
     let list = [...contacts];
+
+    // Filter by Active Status depending on current view
+    if (activeTab === 'database') {
+      if (statusFilter === 'Active') {
+        list = list.filter(c => c.account_status !== 'Inactive');
+      } else if (statusFilter === 'Inactive') {
+        list = list.filter(c => c.account_status === 'Inactive');
+      }
+    } else {
+      // In campaign tabs, always exclude inactive voters
+      list = list.filter(c => c.account_status !== 'Inactive');
+    }
 
     // Search query matching
     if (searchQuery) {
@@ -1947,6 +1962,15 @@ export default function App() {
                 <div className="filters-wrapper">
                   <select 
                     className="filter-select" 
+                    value={statusFilter} 
+                    onChange={(e) => { setStatusFilter(e.target.value); setCurrentPage(1); }}
+                  >
+                    <option value="Active">Active Only</option>
+                    <option value="Inactive">Inactive Only</option>
+                    <option value="All">All Statuses</option>
+                  </select>
+                  <select 
+                    className="filter-select" 
                     value={sentimentFilter} 
                     onChange={(e) => { setSentimentFilter(e.target.value); setCurrentPage(1); }}
                   >
@@ -1983,7 +2007,12 @@ export default function App() {
                         <tr key={contact.id}>
                           <td>{contact.s_no}</td>
                           <td>{contact.acc_code}</td>
-                          <td style={{ fontWeight: 600, color: 'var(--color-text-white)' }}>{contact.account_name}</td>
+                          <td style={{ fontWeight: 600, color: 'var(--color-text-white)' }}>
+                            {contact.account_name}
+                            {contact.account_status === 'Inactive' && (
+                              <span className="status-badge failed" style={{ marginLeft: 8, fontSize: 10, padding: '2px 6px', textTransform: 'uppercase' }}>Inactive</span>
+                            )}
+                          </td>
                           <td>{contact.mobile_number}</td>
                           <td>{contact.email_id || <span style={{ color: '#ef4444', fontStyle: 'italic' }}>None</span>}</td>
                           <td>
@@ -2254,6 +2283,17 @@ export default function App() {
                   value={selectedContact.email_id} 
                   onChange={(e) => setSelectedContact(prev => ({ ...prev, email_id: e.target.value }))}
                 />
+              </div>
+              <div className="drawer-field">
+                <span className="drawer-label">Account Status</span>
+                <select 
+                  className="drawer-input"
+                  value={selectedContact.account_status || 'Active'}
+                  onChange={(e) => setSelectedContact(prev => ({ ...prev, account_status: e.target.value }))}
+                >
+                  <option value="Active">Active (Included in campaigns)</option>
+                  <option value="Inactive">Inactive (Excluded from lists & stats)</option>
+                </select>
               </div>
             </div>
 

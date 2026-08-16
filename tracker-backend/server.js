@@ -229,7 +229,8 @@ const initPostgresDB = async () => {
           exit_poll_status TEXT DEFAULT 'Pending',
           emirate TEXT,
           district TEXT,
-          assigned_to TEXT DEFAULT 'Unassigned'
+          assigned_to TEXT DEFAULT 'Unassigned',
+          account_status TEXT DEFAULT 'Active'
         )
       `);
       console.log('PostgreSQL contacts table created.');
@@ -244,6 +245,7 @@ const initPostgresDB = async () => {
         await pgPool.query("ALTER TABLE contacts ADD COLUMN IF NOT EXISTS emirate TEXT");
         await pgPool.query("ALTER TABLE contacts ADD COLUMN IF NOT EXISTS district TEXT");
         await pgPool.query("ALTER TABLE contacts ADD COLUMN IF NOT EXISTS assigned_to TEXT DEFAULT 'Unassigned'");
+        await pgPool.query("ALTER TABLE contacts ADD COLUMN IF NOT EXISTS account_status TEXT DEFAULT 'Active'");
       } catch (migrateErr) {
         console.log("PostgreSQL schema migrations ran successfully.");
       }
@@ -369,7 +371,8 @@ if (isPostgres) {
             exit_poll_status TEXT DEFAULT 'Pending',
             emirate TEXT,
             district TEXT,
-            assigned_to TEXT DEFAULT 'Unassigned'
+            assigned_to TEXT DEFAULT 'Unassigned',
+            account_status TEXT DEFAULT 'Active'
           )`);
           
           const stmt = initDb.prepare(`INSERT INTO contacts (
@@ -436,6 +439,11 @@ if (isPostgres) {
             console.error("Migration error adding assigned_to:", alterErr.message);
           }
         });
+        db.run("ALTER TABLE contacts ADD COLUMN account_status TEXT DEFAULT 'Active'", (alterErr) => {
+          if (alterErr && !alterErr.message.includes("duplicate column name")) {
+            console.error("Migration error adding account_status:", alterErr.message);
+          }
+        });
         // Run Excel sync on SQLite startup after schema migrations finish
         syncExcelDataOnStartup();
       });
@@ -452,7 +460,7 @@ app.get('/api/contacts', async (req, res) => {
              whatsapp_status, whatsapp_sent_date, 
              call_status, call_sent_date, notes,
              member_reaction, exit_poll_status,
-             emirate, district, assigned_to
+             emirate, district, assigned_to, account_status
       FROM contacts 
       ORDER BY s_no ASC
     `);
@@ -495,7 +503,8 @@ app.put('/api/contacts/:id', async (req, res) => {
     exit_poll_status,
     emirate,
     district,
-    assigned_to
+    assigned_to,
+    account_status
   } = req.body;
 
   try {
@@ -517,7 +526,8 @@ app.put('/api/contacts/:id', async (req, res) => {
       exit_poll_status: exit_poll_status !== undefined ? exit_poll_status : existing.exit_poll_status,
       emirate: emirate !== undefined ? emirate : existing.emirate,
       district: district !== undefined ? district : existing.district,
-      assigned_to: assigned_to !== undefined ? assigned_to : existing.assigned_to
+      assigned_to: assigned_to !== undefined ? assigned_to : existing.assigned_to,
+      account_status: account_status !== undefined ? account_status : existing.account_status
     };
 
     await run(`
@@ -526,7 +536,8 @@ app.put('/api/contacts/:id', async (req, res) => {
           whatsapp_status = ?, whatsapp_sent_date = ?, 
           call_status = ?, call_sent_date = ?, notes = ?,
           member_reaction = ?, exit_poll_status = ?,
-          emirate = ?, district = ?, assigned_to = ?
+          emirate = ?, district = ?, assigned_to = ?,
+          account_status = ?
       WHERE id = ?
     `, [
       updated.email_status,
@@ -541,6 +552,7 @@ app.put('/api/contacts/:id', async (req, res) => {
       updated.emirate,
       updated.district,
       updated.assigned_to,
+      updated.account_status,
       id
     ]);
 
@@ -602,51 +614,51 @@ app.get('/api/stats', async (req, res) => {
   const today = req.query.today || new Date().toISOString().split('T')[0];
   try {
     // Total contacts
-    const [totalRow] = await query('SELECT count(*) as total FROM contacts');
+    const [totalRow] = await query("SELECT count(*) as total FROM contacts WHERE account_status = 'Active'");
     const total = totalRow.total;
 
     // Missing Email and Phone
-    const [missingEmailRow] = await query("SELECT count(*) as count FROM contacts WHERE email_id = '' OR email_id IS NULL");
-    const [missingMobileRow] = await query("SELECT count(*) as count FROM contacts WHERE mobile_number = '' OR mobile_number IS NULL");
+    const [missingEmailRow] = await query("SELECT count(*) as count FROM contacts WHERE (email_id = '' OR email_id IS NULL) AND account_status = 'Active'");
+    const [missingMobileRow] = await query("SELECT count(*) as count FROM contacts WHERE (mobile_number = '' OR mobile_number IS NULL) AND account_status = 'Active'");
 
     // Duplicate statistics (Email/Mobile counts sharing same address, excluding blanks)
     const [dupEmailRow] = await query(`
       SELECT count(*) as count FROM contacts 
-      WHERE email_id != '' AND email_id IS NOT NULL 
+      WHERE email_id != '' AND email_id IS NOT NULL AND account_status = 'Active'
       AND email_id IN (
         SELECT email_id FROM contacts 
-        WHERE email_id != '' AND email_id IS NOT NULL 
+        WHERE email_id != '' AND email_id IS NOT NULL AND account_status = 'Active'
         GROUP BY email_id HAVING count(*) > 1
       )
     `);
     
     const [dupMobileRow] = await query(`
       SELECT count(*) as count FROM contacts 
-      WHERE mobile_number != '' AND mobile_number IS NOT NULL 
+      WHERE mobile_number != '' AND mobile_number IS NOT NULL AND account_status = 'Active'
       AND mobile_number IN (
         SELECT mobile_number FROM contacts 
-        WHERE mobile_number != '' AND mobile_number IS NOT NULL 
+        WHERE mobile_number != '' AND mobile_number IS NOT NULL AND account_status = 'Active'
         GROUP BY mobile_number HAVING count(*) > 1
       )
     `);
 
     // Email campaigns status counts
-    const emailStatuses = await query('SELECT email_status, count(*) as count FROM contacts GROUP BY email_status');
+    const emailStatuses = await query("SELECT email_status, count(*) as count FROM contacts WHERE account_status = 'Active' GROUP BY email_status");
     // WhatsApp campaign status counts
-    const whatsappStatuses = await query('SELECT whatsapp_status, count(*) as count FROM contacts GROUP BY whatsapp_status');
+    const whatsappStatuses = await query("SELECT whatsapp_status, count(*) as count FROM contacts WHERE account_status = 'Active' GROUP BY whatsapp_status");
     // Call campaign status counts
-    const callStatuses = await query('SELECT call_status, count(*) as count FROM contacts GROUP BY call_status');
+    const callStatuses = await query("SELECT call_status, count(*) as count FROM contacts WHERE account_status = 'Active' GROUP BY call_status");
 
     // Sentiment breakdown (member_reaction)
-    const reactionRows = await query('SELECT member_reaction, count(*) as count FROM contacts GROUP BY member_reaction');
+    const reactionRows = await query("SELECT member_reaction, count(*) as count FROM contacts WHERE account_status = 'Active' GROUP BY member_reaction");
     
     // Exit Poll status breakdown
-    const exitPollRows = await query('SELECT exit_poll_status, count(*) as count FROM contacts GROUP BY exit_poll_status');
+    const exitPollRows = await query("SELECT exit_poll_status, count(*) as count FROM contacts WHERE account_status = 'Active' GROUP BY exit_poll_status");
 
     // Counts for TODAY
-    const [emailTodayRow] = await query("SELECT count(*) as count FROM contacts WHERE email_status = 'Sent' AND email_sent_date = ?", [today]);
-    const [whatsappTodayRow] = await query("SELECT count(*) as count FROM contacts WHERE whatsapp_status = 'Sent' AND whatsapp_sent_date = ?", [today]);
-    const [callTodayRow] = await query("SELECT count(*) as count FROM contacts WHERE call_status != 'Not Called' AND call_sent_date = ?", [today]);
+    const [emailTodayRow] = await query("SELECT count(*) as count FROM contacts WHERE email_status = 'Sent' AND email_sent_date = ? AND account_status = 'Active'", [today]);
+    const [whatsappTodayRow] = await query("SELECT count(*) as count FROM contacts WHERE whatsapp_status = 'Sent' AND whatsapp_sent_date = ? AND account_status = 'Active'", [today]);
+    const [callTodayRow] = await query("SELECT count(*) as count FROM contacts WHERE call_status != 'Not Called' AND call_sent_date = ? AND account_status = 'Active'", [today]);
 
     // Emirate grouping
     const emirateRows = await query(`
@@ -655,6 +667,7 @@ app.get('/api/stats', async (req, res) => {
              sum(case when call_status != 'Not Called' then 1 else 0 end) as contacted,
              sum(case when member_reaction in ('Strong Support (Panel)', 'Leaning Support (Anil Kumar only)') then 1 else 0 end) as positive
       FROM contacts
+      WHERE account_status = 'Active'
       GROUP BY emirate
       ORDER BY total DESC
     `);
@@ -666,6 +679,7 @@ app.get('/api/stats', async (req, res) => {
              sum(case when call_status != 'Not Called' then 1 else 0 end) as contacted,
              sum(case when member_reaction in ('Strong Support (Panel)', 'Leaning Support (Anil Kumar only)') then 1 else 0 end) as positive
       FROM contacts
+      WHERE account_status = 'Active'
       GROUP BY district
       ORDER BY total DESC
     `);
@@ -677,17 +691,18 @@ app.get('/api/stats', async (req, res) => {
              sum(case when call_status != 'Not Called' then 1 else 0 end) as done,
              sum(case when member_reaction in ('Strong Support (Panel)', 'Leaning Support (Anil Kumar only)') then 1 else 0 end) as positive
       FROM contacts
+      WHERE account_status = 'Active'
       GROUP BY assigned_to
       ORDER BY assigned DESC
     `);
 
     // Response breakdown counts
-    const [breakdownPositive] = await query("SELECT count(*) as count FROM contacts WHERE member_reaction IN ('Strong Support (Panel)', 'Leaning Support (Anil Kumar only)')");
-    const [breakdownFollowup] = await query("SELECT count(*) as count FROM contacts WHERE call_status IN ('Busy', 'Reminder Request', 'Left Message') AND (member_reaction IS NULL OR member_reaction NOT IN ('Strong Support (Panel)', 'Leaning Support (Anil Kumar only)'))");
-    const [breakdownUndecided] = await query("SELECT count(*) as count FROM contacts WHERE member_reaction = 'Undecided / Needs Follow-up'");
-    const [breakdownNegative] = await query("SELECT count(*) as count FROM contacts WHERE member_reaction = 'Opposed'");
-    const [breakdownUnreachable] = await query("SELECT count(*) as count FROM contacts WHERE call_status IN ('No Response', 'Switched Off', 'No Answer', 'Failed')");
-    const [breakdownNotContacted] = await query("SELECT count(*) as count FROM contacts WHERE call_status = 'Not Called'");
+    const [breakdownPositive] = await query("SELECT count(*) as count FROM contacts WHERE member_reaction IN ('Strong Support (Panel)', 'Leaning Support (Anil Kumar only)') AND account_status = 'Active'");
+    const [breakdownFollowup] = await query("SELECT count(*) as count FROM contacts WHERE call_status IN ('Busy', 'Reminder Request', 'Left Message') AND (member_reaction IS NULL OR member_reaction NOT IN ('Strong Support (Panel)', 'Leaning Support (Anil Kumar only)')) AND account_status = 'Active'");
+    const [breakdownUndecided] = await query("SELECT count(*) as count FROM contacts WHERE member_reaction = 'Undecided / Needs Follow-up' AND account_status = 'Active'");
+    const [breakdownNegative] = await query("SELECT count(*) as count FROM contacts WHERE member_reaction = 'Opposed' AND account_status = 'Active'");
+    const [breakdownUnreachable] = await query("SELECT count(*) as count FROM contacts WHERE call_status IN ('No Response', 'Switched Off', 'No Answer', 'Failed') AND account_status = 'Active'");
+    const [breakdownNotContacted] = await query("SELECT count(*) as count FROM contacts WHERE call_status = 'Not Called' AND account_status = 'Active'");
 
     // Format outputs
     const stats = {

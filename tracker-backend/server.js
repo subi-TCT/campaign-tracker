@@ -199,6 +199,15 @@ const syncExcelDataOnStartup = async () => {
 // Postgres Auto-Initialization helper
 const initPostgresDB = async () => {
   try {
+    // 1. Create volunteers table first to guarantee it exists before any data/sync operations
+    await pgPool.query(`
+      CREATE TABLE IF NOT EXISTS volunteers (
+        id SERIAL PRIMARY KEY,
+        name TEXT UNIQUE NOT NULL
+      )
+    `);
+    console.log('PostgreSQL volunteers table schema ready.');
+
     const checkTable = await pgPool.query(`
       SELECT EXISTS (
         SELECT FROM information_schema.tables 
@@ -311,23 +320,17 @@ const initPostgresDB = async () => {
       }
     }
 
-    // Run Excel synchronization once database table and seeding are fully completed
-    await syncExcelDataOnStartup();
-
-    // Create volunteers table and auto-seed from contacts
-    await pgPool.query(`
-      CREATE TABLE IF NOT EXISTS volunteers (
-        id SERIAL PRIMARY KEY,
-        name TEXT UNIQUE NOT NULL
-      )
-    `);
+    // Auto-seed volunteers from contacts table prior to running Excel sync (to make sure it exists)
     await pgPool.query(`
       INSERT INTO volunteers (name)
       SELECT DISTINCT assigned_to FROM contacts
       WHERE assigned_to IS NOT NULL AND assigned_to != '' AND assigned_to != 'Unassigned'
       ON CONFLICT (name) DO NOTHING
     `);
-    console.log('PostgreSQL volunteers table ready and seeded.');
+    console.log('PostgreSQL volunteers table seeded.');
+
+    // Run Excel synchronization once database table and seeding are fully completed
+    await syncExcelDataOnStartup();
   } catch (err) {
     console.error('Error during PostgreSQL auto-initialization:', err.message);
   }
@@ -437,8 +440,16 @@ if (isPostgres) {
       console.error('Error connecting to SQLite database:', err.message);
     } else {
       console.log('Connected to SQLite database at:', dbPath);
-      // Run self-healing schema migrations on startup to add new columns if they are missing
+      // Run self-healing schema migrations on startup to add new columns and tables if they are missing
       db.serialize(() => {
+        // Create volunteers table first
+        db.run(`CREATE TABLE IF NOT EXISTS volunteers (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          name TEXT UNIQUE NOT NULL
+        )`, (err) => {
+          if (err) console.error("Error creating SQLite volunteers table:", err.message);
+        });
+
         db.run("ALTER TABLE contacts ADD COLUMN emirate TEXT", (alterErr) => {
           if (alterErr && !alterErr.message.includes("duplicate column name")) {
             console.error("Migration error adding emirate:", alterErr.message);
@@ -459,24 +470,18 @@ if (isPostgres) {
             console.error("Migration error adding account_status:", alterErr.message);
           }
         });
-        // Run Excel sync on SQLite startup after schema migrations finish
-        syncExcelDataOnStartup().then(() => {
-          db.serialize(() => {
-            db.run(`CREATE TABLE IF NOT EXISTS volunteers (
-              id INTEGER PRIMARY KEY AUTOINCREMENT,
-              name TEXT UNIQUE NOT NULL
-            )`, (err) => {
-              if (err) console.error("Error creating SQLite volunteers table:", err.message);
-            });
-            db.run(`INSERT OR IGNORE INTO volunteers (name)
-              SELECT DISTINCT assigned_to FROM contacts
-              WHERE assigned_to IS NOT NULL AND assigned_to != '' AND assigned_to != 'Unassigned'`, (err) => {
-                if (err) console.error("Error seeding SQLite volunteers table:", err.message);
-                else console.log("SQLite volunteers table ready and seeded.");
-              });
+
+        // Auto-seed volunteers from contacts table prior to running Excel sync (to make sure it exists)
+        db.run(`INSERT OR IGNORE INTO volunteers (name)
+          SELECT DISTINCT assigned_to FROM contacts
+          WHERE assigned_to IS NOT NULL AND assigned_to != '' AND assigned_to != 'Unassigned'`, (err) => {
+            if (err) console.error("Error seeding SQLite volunteers table:", err.message);
+            else console.log("SQLite volunteers table ready and seeded.");
           });
-        }).catch(err => {
-          console.error("Error during SQLite startup Excel sync and volunteer seeding:", err.message);
+
+        // Run Excel sync on SQLite startup after schema migrations finish
+        syncExcelDataOnStartup().catch(err => {
+          console.error("Error during SQLite startup Excel sync:", err.message);
         });
       });
     }

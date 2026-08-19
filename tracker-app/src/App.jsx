@@ -69,6 +69,7 @@ export default function App() {
   const [showVolunteerModal, setShowVolunteerModal] = useState(false);
   const [newVolunteerName, setNewVolunteerName] = useState('');
   const [selectedVolunteerDetail, setSelectedVolunteerDetail] = useState(null);
+  const [districtFilter, setDistrictFilter] = useState('All');
 
   // Selection for bulk actions
   const [selectedContactIds, setSelectedContactIds] = useState([]);
@@ -278,6 +279,7 @@ export default function App() {
       setSearchQuery('');
       setSentimentFilter('All');
       setStatusFilter('Active');
+      setDistrictFilter('All');
     }
   };
 
@@ -604,6 +606,11 @@ export default function App() {
       list = list.filter(c => c.member_reaction === sentimentFilter);
     }
 
+    // District Filter (Master Database tab only)
+    if (activeTab === 'database' && districtFilter !== 'All') {
+      list = list.filter(c => c.district === districtFilter);
+    }
+
     return list;
   };
 
@@ -612,6 +619,9 @@ export default function App() {
   const totalPages = Math.ceil(totalItems / itemsPerPage);
   const startIndex = (currentPage - 1) * itemsPerPage;
   const paginatedContacts = filteredContacts.slice(startIndex, startIndex + itemsPerPage);
+
+  // Get unique districts dynamically from loaded contacts list
+  const uniqueDistricts = [...new Set(contacts.map(c => c.district).filter(Boolean))].sort();
 
   const handlePageChange = (newPage) => {
     if (newPage >= 1 && newPage <= totalPages) {
@@ -2100,6 +2110,16 @@ export default function App() {
                     <option value="Opposed">Opposed</option>
                     <option value="Unknown">Unknown / Not Logged</option>
                   </select>
+                  <select 
+                    className="filter-select" 
+                    value={districtFilter} 
+                    onChange={(e) => { setDistrictFilter(e.target.value); setCurrentPage(1); }}
+                  >
+                    <option value="All">All Districts</option>
+                    {uniqueDistricts.map(dist => (
+                      <option key={dist} value={dist}>{dist}</option>
+                    ))}
+                  </select>
                 </div>
               </div>
 
@@ -2118,6 +2138,7 @@ export default function App() {
                       <th>S.No</th>
                       <th>Code</th>
                       <th>Account Name</th>
+                      <th>District</th>
                       <th>Mobile Number</th>
                       <th>Email ID</th>
                       <th>Sentiment</th>
@@ -2146,6 +2167,7 @@ export default function App() {
                               <span className="status-badge failed" style={{ marginLeft: 8, fontSize: 10, padding: '2px 6px', textTransform: 'uppercase' }}>Inactive</span>
                             )}
                           </td>
+                          <td>{contact.district || '—'}</td>
                           <td>{contact.mobile_number}</td>
                           <td>{contact.email_id || <span style={{ color: '#ef4444', fontStyle: 'italic' }}>None</span>}</td>
                           <td>
@@ -2173,7 +2195,7 @@ export default function App() {
                       ))
                     ) : (
                       <tr>
-                        <td colSpan="11" style={{ textAlign: 'center', padding: 32, color: 'var(--color-text-muted)' }}>No contacts found matching selection.</td>
+                        <td colSpan="12" style={{ textAlign: 'center', padding: 32, color: 'var(--color-text-muted)' }}>No contacts found matching selection.</td>
                       </tr>
                     )}
                   </tbody>

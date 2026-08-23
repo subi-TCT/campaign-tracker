@@ -1,3 +1,4 @@
+require('dotenv').config();
 const xlsx = require('xlsx');
 const path = require('path');
 const fs = require('fs');
@@ -23,11 +24,19 @@ let pgPool = null;
 
 if (isPostgres) {
   const { Pool } = require('pg');
+  const { URL } = require('url');
+  
+  let sslConfig = { rejectUnauthorized: false };
+  try {
+    const dbUrl = new URL(process.env.DATABASE_URL);
+    if (['localhost', '127.0.0.1', '::1', ''].includes(dbUrl.hostname)) {
+      sslConfig = false;
+    }
+  } catch (e) {}
+
   pgPool = new Pool({
     connectionString: process.env.DATABASE_URL,
-    ssl: {
-      rejectUnauthorized: false
-    }
+    ssl: sslConfig
   });
   console.log('PostgreSQL configuration detected for sync. Connecting to PostgreSQL...');
 } else {
@@ -65,6 +74,11 @@ if (isPostgres) {
       db.run("ALTER TABLE contacts ADD COLUMN assigned_to TEXT DEFAULT 'Unassigned'", (alterErr) => {
         if (alterErr && !alterErr.message.includes("duplicate column name")) {
           console.error("Migration error adding assigned_to:", alterErr.message);
+        }
+      });
+      db.run("ALTER TABLE contacts ADD COLUMN area TEXT", (alterErr) => {
+        if (alterErr && !alterErr.message.includes("duplicate column name") && !alterErr.message.includes("duplicate column")) {
+          console.error("Migration error adding area:", alterErr.message);
         }
       });
     });

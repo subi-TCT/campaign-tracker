@@ -1,3 +1,4 @@
+require('dotenv').config();
 const xlsx = require('xlsx');
 const path = require('path');
 const fs = require('fs');
@@ -32,9 +33,19 @@ const initDB = () => {
   return new Promise((resolve, reject) => {
     if (isPostgres) {
       const { Pool } = require('pg');
+      const { URL } = require('url');
+      
+      let sslConfig = { rejectUnauthorized: false };
+      try {
+        const dbUrl = new URL(process.env.DATABASE_URL);
+        if (['localhost', '127.0.0.1', '::1', ''].includes(dbUrl.hostname)) {
+          sslConfig = false;
+        }
+      } catch (e) {}
+
       pgPool = new Pool({
         connectionString: process.env.DATABASE_URL,
-        ssl: { rejectUnauthorized: false }
+        ssl: sslConfig
       });
       console.log('Connected to PostgreSQL for comparison.');
       resolve();

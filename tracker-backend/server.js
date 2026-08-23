@@ -1,3 +1,4 @@
+require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const sqlite3 = require('sqlite3').verbose();
@@ -239,7 +240,8 @@ const initPostgresDB = async () => {
           emirate TEXT,
           district TEXT,
           assigned_to TEXT DEFAULT 'Unassigned',
-          account_status TEXT DEFAULT 'Active'
+          account_status TEXT DEFAULT 'Active',
+          area TEXT
         )
       `);
       console.log('PostgreSQL contacts table created.');
@@ -255,6 +257,7 @@ const initPostgresDB = async () => {
         await pgPool.query("ALTER TABLE contacts ADD COLUMN IF NOT EXISTS district TEXT");
         await pgPool.query("ALTER TABLE contacts ADD COLUMN IF NOT EXISTS assigned_to TEXT DEFAULT 'Unassigned'");
         await pgPool.query("ALTER TABLE contacts ADD COLUMN IF NOT EXISTS account_status TEXT DEFAULT 'Active'");
+        await pgPool.query("ALTER TABLE contacts ADD COLUMN IF NOT EXISTS area TEXT");
       } catch (migrateErr) {
         console.log("PostgreSQL schema migrations ran successfully.");
       }
@@ -338,11 +341,19 @@ const initPostgresDB = async () => {
 
 if (isPostgres) {
   const { Pool } = require('pg');
+  const { URL } = require('url');
+  
+  let sslConfig = { rejectUnauthorized: false };
+  try {
+    const dbUrl = new URL(process.env.DATABASE_URL);
+    if (['localhost', '127.0.0.1', '::1', ''].includes(dbUrl.hostname)) {
+      sslConfig = false;
+    }
+  } catch (e) {}
+
   pgPool = new Pool({
     connectionString: process.env.DATABASE_URL,
-    ssl: {
-      rejectUnauthorized: false
-    }
+    ssl: sslConfig
   });
   console.log('PostgreSQL configuration detected. Connecting to PostgreSQL...');
   initPostgresDB();
@@ -390,7 +401,8 @@ if (isPostgres) {
             emirate TEXT,
             district TEXT,
             assigned_to TEXT DEFAULT 'Unassigned',
-            account_status TEXT DEFAULT 'Active'
+            account_status TEXT DEFAULT 'Active',
+            area TEXT
           )`);
           
           const stmt = initDb.prepare(`INSERT INTO contacts (
@@ -468,6 +480,11 @@ if (isPostgres) {
         db.run("ALTER TABLE contacts ADD COLUMN account_status TEXT DEFAULT 'Active'", (alterErr) => {
           if (alterErr && !alterErr.message.includes("duplicate column name")) {
             console.error("Migration error adding account_status:", alterErr.message);
+          }
+        });
+        db.run("ALTER TABLE contacts ADD COLUMN area TEXT", (alterErr) => {
+          if (alterErr && !alterErr.message.includes("duplicate column name") && !alterErr.message.includes("duplicate column")) {
+            console.error("Migration error adding area:", alterErr.message);
           }
         });
 
@@ -563,7 +580,7 @@ app.get('/api/contacts', async (req, res) => {
              whatsapp_status, whatsapp_sent_date, 
              call_status, call_sent_date, notes,
              member_reaction, exit_poll_status,
-             emirate, district, assigned_to, account_status
+             emirate, district, assigned_to, account_status, area
       FROM contacts 
       ORDER BY s_no ASC
     `);
@@ -576,12 +593,12 @@ app.get('/api/contacts', async (req, res) => {
 
 // POST create a new contact
 app.post('/api/contacts', async (req, res) => {
-  const { s_no, acc_code, account_name, mobile_number, email_id } = req.body;
+  const { s_no, acc_code, account_name, mobile_number, email_id, area } = req.body;
   try {
     const result = await run(`
-      INSERT INTO contacts (s_no, acc_code, account_name, mobile_number, email_id)
-      VALUES (?, ?, ?, ?, ?)
-    `, [s_no, acc_code, account_name, mobile_number, email_id]);
+      INSERT INTO contacts (s_no, acc_code, account_name, mobile_number, email_id, area)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `, [s_no, acc_code, account_name, mobile_number, email_id, area]);
     
     const [row] = await query('SELECT * FROM contacts WHERE id = ?', [result.id]);
     res.status(201).json(row);
@@ -607,7 +624,8 @@ app.put('/api/contacts/:id', async (req, res) => {
     emirate,
     district,
     assigned_to,
-    account_status
+    account_status,
+    area
   } = req.body;
 
   try {
@@ -630,7 +648,8 @@ app.put('/api/contacts/:id', async (req, res) => {
       emirate: emirate !== undefined ? emirate : existing.emirate,
       district: district !== undefined ? district : existing.district,
       assigned_to: assigned_to !== undefined ? assigned_to : existing.assigned_to,
-      account_status: account_status !== undefined ? account_status : existing.account_status
+      account_status: account_status !== undefined ? account_status : existing.account_status,
+      area: area !== undefined ? area : existing.area
     };
 
     await run(`
@@ -640,7 +659,7 @@ app.put('/api/contacts/:id', async (req, res) => {
           call_status = ?, call_sent_date = ?, notes = ?,
           member_reaction = ?, exit_poll_status = ?,
           emirate = ?, district = ?, assigned_to = ?,
-          account_status = ?
+          account_status = ?, area = ?
       WHERE id = ?
     `, [
       updated.email_status,
@@ -656,6 +675,7 @@ app.put('/api/contacts/:id', async (req, res) => {
       updated.district,
       updated.assigned_to,
       updated.account_status,
+      updated.area,
       id
     ]);
 

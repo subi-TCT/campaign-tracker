@@ -78,7 +78,7 @@ export default function App() {
   const [selectedContact, setSelectedContact] = useState(null);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [showAddModal, setShowAddModal] = useState(false);
-  const [newContact, setNewContact] = useState({ name: '', accCode: '', mobile: '', email: '' });
+  const [newContact, setNewContact] = useState({ name: '', accCode: '', mobile: '', email: '', district: '', area: '' });
   const [waConfirmContact, setWaConfirmContact] = useState(null); // Contact currently sending WA to
 
   // Bulk Import Logs modal states
@@ -416,14 +416,16 @@ export default function App() {
           acc_code: newContact.accCode,
           account_name: newContact.name,
           mobile_number: newContact.mobile,
-          email_id: newContact.email
+          email_id: newContact.email,
+          district: newContact.district,
+          area: newContact.area
         })
       });
 
       if (!res.ok) throw new Error('Failed to add contact');
       
       setShowAddModal(false);
-      setNewContact({ name: '', accCode: '', mobile: '', email: '' });
+      setNewContact({ name: '', accCode: '', mobile: '', email: '', district: '', area: '' });
       await fetchData();
       alert('Contact added successfully!');
     } catch (err) {
@@ -540,7 +542,9 @@ export default function App() {
         member_reaction: selectedContact.member_reaction,
         exit_poll_status: selectedContact.exit_poll_status,
         account_status: selectedContact.account_status,
-        assigned_to: selectedContact.assigned_to
+        assigned_to: selectedContact.assigned_to,
+        area: selectedContact.area,
+        district: selectedContact.district
       });
     } catch (err) {
       console.error("Error saving drawer details:", err);
@@ -2139,6 +2143,7 @@ export default function App() {
                       <th>Code</th>
                       <th>Account Name</th>
                       <th>District</th>
+                      <th>Area</th>
                       <th>Mobile Number</th>
                       <th>Email ID</th>
                       <th>Sentiment</th>
@@ -2168,6 +2173,7 @@ export default function App() {
                             )}
                           </td>
                           <td>{contact.district || '—'}</td>
+                          <td>{contact.area || '—'}</td>
                           <td>{contact.mobile_number}</td>
                           <td>{contact.email_id || <span style={{ color: '#ef4444', fontStyle: 'italic' }}>None</span>}</td>
                           <td>
@@ -2675,6 +2681,24 @@ export default function App() {
                 />
               </div>
               <div className="drawer-field">
+                <span className="drawer-label">District</span>
+                <input 
+                  type="text" 
+                  className="drawer-input" 
+                  value={selectedContact.district || ''} 
+                  onChange={(e) => setSelectedContact(prev => ({ ...prev, district: e.target.value }))}
+                />
+              </div>
+              <div className="drawer-field">
+                <span className="drawer-label">Area</span>
+                <input 
+                  type="text" 
+                  className="drawer-input" 
+                  value={selectedContact.area || ''} 
+                  onChange={(e) => setSelectedContact(prev => ({ ...prev, area: e.target.value }))}
+                />
+              </div>
+              <div className="drawer-field">
                 <span className="drawer-label">Account Status</span>
                 <select 
                   className="drawer-input"
@@ -2883,6 +2907,28 @@ export default function App() {
                 placeholder="e.g. voter@example.com"
                 value={newContact.email}
                 onChange={(e) => setNewContact(prev => ({ ...prev, email: e.target.value }))}
+              />
+            </div>
+
+            <div className="drawer-field">
+              <span className="drawer-label">District</span>
+              <input 
+                type="text" 
+                className="drawer-input" 
+                placeholder="e.g. Kozhikode"
+                value={newContact.district || ''}
+                onChange={(e) => setNewContact(prev => ({ ...prev, district: e.target.value }))}
+              />
+            </div>
+
+            <div className="drawer-field">
+              <span className="drawer-label">Area</span>
+              <input 
+                type="text" 
+                className="drawer-input" 
+                placeholder="e.g. Muttada"
+                value={newContact.area || ''}
+                onChange={(e) => setNewContact(prev => ({ ...prev, area: e.target.value }))}
               />
             </div>
 

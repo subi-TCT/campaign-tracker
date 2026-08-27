@@ -70,6 +70,7 @@ export default function App() {
   const [newVolunteerName, setNewVolunteerName] = useState('');
   const [selectedVolunteerDetail, setSelectedVolunteerDetail] = useState(null);
   const [districtFilter, setDistrictFilter] = useState('All');
+  const [assignedToFilter, setAssignedToFilter] = useState('All');
 
   // Selection for bulk actions
   const [selectedContactIds, setSelectedContactIds] = useState([]);
@@ -280,6 +281,7 @@ export default function App() {
       setSentimentFilter('All');
       setStatusFilter('Active');
       setDistrictFilter('All');
+      setAssignedToFilter('All');
     }
   };
 
@@ -613,6 +615,11 @@ export default function App() {
     // District Filter (Master Database tab only)
     if (activeTab === 'database' && districtFilter !== 'All') {
       list = list.filter(c => c.district === districtFilter);
+    }
+
+    // Volunteer Filter (Call Center & WhatsApp tabs only)
+    if ((activeTab === 'call' || activeTab === 'whatsapp') && assignedToFilter !== 'All') {
+      list = list.filter(c => c.assigned_to === assignedToFilter);
     }
 
     return list;
@@ -1718,6 +1725,17 @@ export default function App() {
                     <option value="Opposed">Opposed</option>
                     <option value="Unknown">Unknown / Not Logged</option>
                   </select>
+                  <select 
+                    className="filter-select" 
+                    value={assignedToFilter} 
+                    onChange={(e) => { setAssignedToFilter(e.target.value); setCurrentPage(1); }}
+                  >
+                    <option value="All">All Volunteers</option>
+                    <option value="Unassigned">Unassigned</option>
+                    {volunteers.map(name => (
+                      <option key={name} value={name}>{name}</option>
+                    ))}
+                  </select>
                   <button 
                     className="btn success" 
                     onClick={() => handleExportCSV(true)}
@@ -1868,6 +1886,17 @@ export default function App() {
                     <option value="Undecided / Needs Follow-up">Undecided</option>
                     <option value="Opposed">Opposed</option>
                     <option value="Unknown">Unknown / Not Logged</option>
+                  </select>
+                  <select 
+                    className="filter-select" 
+                    value={assignedToFilter} 
+                    onChange={(e) => { setAssignedToFilter(e.target.value); setCurrentPage(1); }}
+                  >
+                    <option value="All">All Volunteers</option>
+                    <option value="Unassigned">Unassigned</option>
+                    {volunteers.map(name => (
+                      <option key={name} value={name}>{name}</option>
+                    ))}
                   </select>
                   <button 
                     className="btn success" 

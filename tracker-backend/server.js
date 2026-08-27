@@ -30,7 +30,7 @@ try {
 
 const dbPath = path.join(dbDir, 'database.sqlite');
 
-const isPostgres = !!process.env.DATABASE_URL;
+let isPostgres = !!process.env.DATABASE_URL;
 let db = null;
 let pgPool = null;
 
@@ -339,26 +339,8 @@ const initPostgresDB = async () => {
   }
 };
 
-if (isPostgres) {
-  const { Pool } = require('pg');
-  const { URL } = require('url');
-  
-  let sslConfig = { rejectUnauthorized: false };
-  try {
-    const dbUrl = new URL(process.env.DATABASE_URL);
-    if (['localhost', '127.0.0.1', '::1', ''].includes(dbUrl.hostname)) {
-      sslConfig = false;
-    }
-  } catch (e) {}
-
-  pgPool = new Pool({
-    connectionString: process.env.DATABASE_URL,
-    ssl: sslConfig
-  });
-  console.log('PostgreSQL configuration detected. Connecting to PostgreSQL...');
-  initPostgresDB();
-} else {
-  console.log('No DATABASE_URL environment variable detected. Defaulting to local SQLite setup...');
+const initSqliteDB = () => {
+  console.log('Defaulting to local SQLite database setup...');
   
   // Auto-initialize DB if it doesn't exist (e.g. fresh Railway Persistent Volume)
   if (!fs.existsSync(dbPath)) {
@@ -503,6 +485,38 @@ if (isPostgres) {
       });
     }
   });
+};
+
+if (isPostgres) {
+  const { Pool } = require('pg');
+  const { URL } = require('url');
+  
+  let sslConfig = { rejectUnauthorized: false };
+  try {
+    const dbUrl = new URL(process.env.DATABASE_URL);
+    if (['localhost', '127.0.0.1', '::1', ''].includes(dbUrl.hostname)) {
+      sslConfig = false;
+    }
+  } catch (e) {}
+
+  pgPool = new Pool({
+    connectionString: process.env.DATABASE_URL,
+    ssl: sslConfig
+  });
+  console.log('PostgreSQL configuration detected. Testing connection...');
+  
+  pgPool.query('SELECT 1')
+    .then(() => {
+      console.log('PostgreSQL connection successful. Initializing Postgres...');
+      initPostgresDB();
+    })
+    .catch((err) => {
+      console.warn('PostgreSQL connection failed. Falling back to local SQLite database...', err.message);
+      isPostgres = false;
+      initSqliteDB();
+    });
+} else {
+  initSqliteDB();
 }
 
 // GET all volunteers

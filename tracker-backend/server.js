@@ -860,23 +860,23 @@ app.get('/api/stats', async (req, res) => {
 
     // Format outputs
     const stats = {
-      totalContacts: total,
-      missingEmail: missingEmailRow.count,
-      missingMobile: missingMobileRow.count,
-      duplicateEmail: dupEmailRow.count,
-      duplicateMobile: dupMobileRow.count,
+      totalContacts: parseInt(total || 0, 10),
+      missingEmail: parseInt(missingEmailRow.count || 0, 10),
+      missingMobile: parseInt(missingMobileRow.count || 0, 10),
+      duplicateEmail: parseInt(dupEmailRow.count || 0, 10),
+      duplicateMobile: parseInt(dupMobileRow.count || 0, 10),
       email: {
         pending: 0,
         sent: 0,
         undelivered: 0,
-        sentToday: emailTodayRow.count
+        sentToday: parseInt(emailTodayRow.count || 0, 10)
       },
       whatsapp: {
         pending: 0,
         sent: 0,
         delivered: 0,
         failed: 0,
-        sentToday: whatsappTodayRow.count
+        sentToday: parseInt(whatsappTodayRow.count || 0, 10)
       },
       call: {
         notCalled: 0,
@@ -889,7 +889,7 @@ app.get('/api/stats', async (req, res) => {
         outOfCountry: 0,
         switchedOff: 0,
         reminderRequest: 0,
-        calledToday: callTodayRow.count
+        calledToday: parseInt(callTodayRow.count || 0, 10)
       },
       reactions: {
         strong: 0,
@@ -904,16 +904,31 @@ app.get('/api/stats', async (req, res) => {
         lost: 0,
         votedUnknown: 0
       },
-      byEmirate: emirateRows,
-      byDistrict: districtRows,
-      byVolunteer: volunteerRows,
+      byEmirate: emirateRows.map(r => ({
+        emirate: r.emirate,
+        total: parseInt(r.total || 0, 10),
+        contacted: parseInt(r.contacted || 0, 10),
+        positive: parseInt(r.positive || 0, 10)
+      })),
+      byDistrict: districtRows.map(r => ({
+        district: r.district,
+        total: parseInt(r.total || 0, 10),
+        contacted: parseInt(r.contacted || 0, 10),
+        positive: parseInt(r.positive || 0, 10)
+      })),
+      byVolunteer: volunteerRows.map(r => ({
+        assigned_to: r.assigned_to,
+        assigned: parseInt(r.assigned || 0, 10),
+        done: parseInt(r.done || 0, 10),
+        positive: parseInt(r.positive || 0, 10)
+      })),
       excelBreakdown: {
-        positive: breakdownPositive.count,
-        followup: breakdownFollowup.count,
-        undecided: breakdownUndecided.count,
-        negative: breakdownNegative.count,
-        unreachable: breakdownUnreachable.count,
-        notContacted: breakdownNotContacted.count,
+        positive: parseInt(breakdownPositive.count || 0, 10),
+        followup: parseInt(breakdownFollowup.count || 0, 10),
+        undecided: parseInt(breakdownUndecided.count || 0, 10),
+        negative: parseInt(breakdownNegative.count || 0, 10),
+        unreachable: parseInt(breakdownUnreachable.count || 0, 10),
+        notContacted: parseInt(breakdownNotContacted.count || 0, 10),
       }
     };
 

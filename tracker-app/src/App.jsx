@@ -1800,7 +1800,7 @@ export default function App() {
                 </div>
                 <div className="stat-card warning">
                   <div className="stat-header"><span>No Connect / Retry</span></div>
-                  <div className="stat-value">{(stats.call.busy || 0) + (stats.call.noAnswer || 0) + (stats.call.noResponse || 0) + (stats.call.switchedOff || 0) + (stats.call.reminderRequest || 0)}</div>
+                  <div className="stat-value">{(Number(stats.call.busy) || 0) + (Number(stats.call.noAnswer) || 0) + (Number(stats.call.noResponse) || 0) + (Number(stats.call.switchedOff) || 0) + (Number(stats.call.reminderRequest) || 0)}</div>
                   <div className="stat-desc">Busy, No Ans, Off, No Response, or Reminders</div>
                 </div>
                 <div className="stat-card">

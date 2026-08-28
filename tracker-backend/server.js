@@ -503,6 +503,28 @@ app.get('/api/volunteers', async (req, res) => {
   }
 });
 
+// DEBUG database route
+app.get('/api/debug-db', async (req, res) => {
+  try {
+    const dbUrl = process.env.DATABASE_URL || 'SQLite';
+    const maskedUrl = dbUrl.replace(/:([^:@]+)@/, ':****@');
+    
+    const countRes = await query("SELECT count(*) as count FROM contacts");
+    const activeRes = await query("SELECT count(*) as count FROM contacts WHERE account_status = 'Active'");
+    const unmatchedRes = await query("SELECT count(*) as count FROM contacts WHERE district IS NULL OR district = '' OR district = 'Unmatched — check'");
+    
+    res.json({
+      databaseUrl: maskedUrl,
+      isPostgres: isPostgres,
+      totalContacts: countRes[0] ? countRes[0].count : '0',
+      activeContacts: activeRes[0] ? activeRes[0].count : '0',
+      unmatchedContacts: unmatchedRes[0] ? unmatchedRes[0].count : '0'
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // POST add a volunteer
 app.post('/api/volunteers', async (req, res) => {
   const { name } = req.body;

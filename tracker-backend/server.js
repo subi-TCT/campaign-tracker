@@ -154,40 +154,7 @@ const syncExcelDataOnStartup = async () => {
         `, [sNo, accCode, name, mobile, email, emirate, district, assignedTo]);
         newCount++;
       } else {
-        const match = dbMatch[0];
-        const updateFields = [];
-        const params = [];
-
-        if (match.account_name !== name && name !== '') {
-          updateFields.push("account_name = ?");
-          params.push(name);
-        }
-        if (match.mobile_number !== mobile && mobile !== '') {
-          updateFields.push("mobile_number = ?");
-          params.push(mobile);
-        }
-        if (match.email_id !== email && email !== '') {
-          updateFields.push("email_id = ?");
-          params.push(email);
-        }
-        if (match.emirate !== emirate && emirate !== '') {
-          updateFields.push("emirate = ?");
-          params.push(emirate);
-        }
-        if (match.district !== district && district !== '') {
-          updateFields.push("district = ?");
-          params.push(district);
-        }
-        if (match.assigned_to !== assignedTo && assignedTo !== '') {
-          updateFields.push("assigned_to = ?");
-          params.push(assignedTo);
-        }
-
-        if (updateFields.length > 0) {
-          params.push(accCode);
-          await run(`UPDATE contacts SET ${updateFields.join(', ')} WHERE acc_code = ?`, params);
-          updateCount++;
-        }
+        // Contact already exists. Do not overwrite or update to protect active campaign edits.
       }
     }
     
@@ -321,19 +288,20 @@ const initPostgresDB = async () => {
       } else {
         console.warn('Warning: contacts_data.json not found for pre-seeding.');
       }
+      // Auto-seed volunteers from contacts table prior to running Excel sync (to make sure it exists)
+      await pgPool.query(`
+        INSERT INTO volunteers (name)
+        SELECT DISTINCT assigned_to FROM contacts
+        WHERE assigned_to IS NOT NULL AND assigned_to != '' AND assigned_to != 'Unassigned'
+        ON CONFLICT (name) DO NOTHING
+      `);
+      console.log('PostgreSQL volunteers table seeded.');
+
+      // Run Excel synchronization once database table and seeding are fully completed
+      await syncExcelDataOnStartup();
+    } else {
+      console.log('PostgreSQL database already contains records. Skipping startup seeding and Excel sync to protect active campaign data.');
     }
-
-    // Auto-seed volunteers from contacts table prior to running Excel sync (to make sure it exists)
-    await pgPool.query(`
-      INSERT INTO volunteers (name)
-      SELECT DISTINCT assigned_to FROM contacts
-      WHERE assigned_to IS NOT NULL AND assigned_to != '' AND assigned_to != 'Unassigned'
-      ON CONFLICT (name) DO NOTHING
-    `);
-    console.log('PostgreSQL volunteers table seeded.');
-
-    // Run Excel synchronization once database table and seeding are fully completed
-    await syncExcelDataOnStartup();
   } catch (err) {
     console.error('Error during PostgreSQL auto-initialization:', err.message);
   }
@@ -470,17 +438,22 @@ const initSqliteDB = () => {
           }
         });
 
-        // Auto-seed volunteers from contacts table prior to running Excel sync (to make sure it exists)
-        db.run(`INSERT OR IGNORE INTO volunteers (name)
-          SELECT DISTINCT assigned_to FROM contacts
-          WHERE assigned_to IS NOT NULL AND assigned_to != '' AND assigned_to != 'Unassigned'`, (err) => {
-            if (err) console.error("Error seeding SQLite volunteers table:", err.message);
-            else console.log("SQLite volunteers table ready and seeded.");
-          });
-
-        // Run Excel sync on SQLite startup after schema migrations finish
-        syncExcelDataOnStartup().catch(err => {
-          console.error("Error during SQLite startup Excel sync:", err.message);
+        // Run volunteers seeding and Excel sync ONLY if SQLite database is completely empty on startup
+        db.get("SELECT count(*) as count FROM contacts", (countErr, row) => {
+          if (!countErr && row && row.count === 0) {
+            console.log("SQLite database is empty. Running auto-seeding and Excel sync...");
+            db.run(`INSERT OR IGNORE INTO volunteers (name)
+              SELECT DISTINCT assigned_to FROM contacts
+              WHERE assigned_to IS NOT NULL AND assigned_to != '' AND assigned_to != 'Unassigned'`, (err) => {
+                if (err) console.error("Error seeding SQLite volunteers table:", err.message);
+                else console.log("SQLite volunteers table ready and seeded.");
+              });
+            syncExcelDataOnStartup().catch(err => {
+              console.error("Error during SQLite startup Excel sync:", err.message);
+            });
+          } else {
+            console.log("SQLite database already contains records. Skipping startup seeding and Excel sync to protect active campaign data.");
+          }
         });
       });
     }

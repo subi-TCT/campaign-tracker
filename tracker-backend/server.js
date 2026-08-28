@@ -719,6 +719,50 @@ app.post('/api/contacts/bulk-whatsapp', async (req, res) => {
   }
 });
 
+// POST bulk update call status
+app.post('/api/contacts/bulk-call', async (req, res) => {
+  const { ids, status, date } = req.body;
+  if (!Array.isArray(ids) || ids.length === 0) {
+    return res.status(400).json({ error: 'Invalid ids array' });
+  }
+
+  try {
+    const placeholders = ids.map(() => '?').join(',');
+    const sql = `
+      UPDATE contacts 
+      SET call_status = ?, call_sent_date = ? 
+      WHERE id IN (${placeholders})
+    `;
+    const result = await run(sql, [status, date, ...ids]);
+    res.json({ success: true, updated: result.changes });
+  } catch (error) {
+    console.error('Error in bulk call update:', error);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+// POST bulk update voter sentiment
+app.post('/api/contacts/bulk-sentiment', async (req, res) => {
+  const { ids, sentiment } = req.body;
+  if (!Array.isArray(ids) || ids.length === 0) {
+    return res.status(400).json({ error: 'Invalid ids array' });
+  }
+
+  try {
+    const placeholders = ids.map(() => '?').join(',');
+    const sql = `
+      UPDATE contacts 
+      SET member_reaction = ? 
+      WHERE id IN (${placeholders})
+    `;
+    const result = await run(sql, [sentiment, ...ids]);
+    res.json({ success: true, updated: result.changes });
+  } catch (error) {
+    console.error('Error in bulk sentiment update:', error);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
 // GET campaign analytics / stats
 app.get('/api/stats', async (req, res) => {
   const today = req.query.today || new Date().toISOString().split('T')[0];

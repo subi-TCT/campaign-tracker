@@ -275,6 +275,7 @@ export default function App() {
     setActiveTab(tabName);
     setMobileMenuOpen(false);
     setSelectedVolunteerDetail(null);
+    setSelectedContactIds([]);
     if (searchReset) {
       setCurrentPage(1);
       setSearchQuery('');
@@ -336,6 +337,82 @@ export default function App() {
     } catch (err) {
       console.error(err);
       alert('Bulk update failed.');
+    }
+  };
+
+  // Bulk update call status
+  const handleBulkCallUpdate = async (status, idsToUpdate = null) => {
+    const ids = idsToUpdate || selectedContactIds;
+    if (ids.length === 0) return;
+    try {
+      const today = getTodayString();
+      const res = await fetch(`${API_BASE}/contacts/bulk-call`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ids,
+          status,
+          date: today
+        })
+      });
+      if (!res.ok) throw new Error('Bulk call update failed');
+      
+      // Clear selection & reload everything
+      if (!idsToUpdate) setSelectedContactIds([]);
+      await fetchData();
+    } catch (err) {
+      console.error(err);
+      alert('Bulk call update failed.');
+    }
+  };
+
+  // Bulk update whatsapp status
+  const handleBulkWhatsAppUpdate = async (status, idsToUpdate = null) => {
+    const ids = idsToUpdate || selectedContactIds;
+    if (ids.length === 0) return;
+    try {
+      const today = getTodayString();
+      const res = await fetch(`${API_BASE}/contacts/bulk-whatsapp`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ids,
+          status,
+          date: today
+        })
+      });
+      if (!res.ok) throw new Error('Bulk WhatsApp update failed');
+      
+      // Clear selection & reload everything
+      if (!idsToUpdate) setSelectedContactIds([]);
+      await fetchData();
+    } catch (err) {
+      console.error(err);
+      alert('Bulk WhatsApp update failed.');
+    }
+  };
+
+  // Bulk update voter sentiment
+  const handleBulkSentimentUpdate = async (sentiment, idsToUpdate = null) => {
+    const ids = idsToUpdate || selectedContactIds;
+    if (ids.length === 0) return;
+    try {
+      const res = await fetch(`${API_BASE}/contacts/bulk-sentiment`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ids,
+          sentiment
+        })
+      });
+      if (!res.ok) throw new Error('Bulk sentiment update failed');
+      
+      // Clear selection & reload everything
+      if (!idsToUpdate) setSelectedContactIds([]);
+      await fetchData();
+    } catch (err) {
+      console.error(err);
+      alert('Bulk sentiment update failed.');
     }
   };
 
@@ -1657,7 +1734,57 @@ export default function App() {
           {/* ==================== CALL CENTER TAB ==================== */}
           {activeTab === 'call' && (
             <div>
-              <h2 className="tab-title">Call Center Operation Sheet</h2>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24, flexWrap: 'wrap', gap: 12 }}>
+                <h2 className="tab-title" style={{ marginBottom: 0 }}>Call Center Operation Sheet</h2>
+                <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+                  {selectedContactIds.length > 0 && (
+                    <span style={{ fontSize: '14px', color: 'var(--color-text-secondary)' }}>
+                      {selectedContactIds.length} selected
+                    </span>
+                  )}
+                  <select 
+                    className="filter-select"
+                    style={{ minWidth: 220 }}
+                    value=""
+                    onChange={(e) => {
+                      if (e.target.value && selectedContactIds.length > 0) {
+                        handleBulkCallUpdate(e.target.value);
+                      }
+                    }}
+                    disabled={selectedContactIds.length === 0}
+                  >
+                    <option value="" disabled hidden>Bulk Update Call Status...</option>
+                    <option value="Not Called">Not Called</option>
+                    <option value="Connected">Connected (Supported)</option>
+                    <option value="Busy">Busy</option>
+                    <option value="No Answer">No Answer</option>
+                    <option value="No Response">No Response</option>
+                    <option value="Out of country">Out of country</option>
+                    <option value="Switched off">Switched off</option>
+                    <option value="Reminder Request">Reminder Request</option>
+                    <option value="Left Message">Left Message</option>
+                    <option value="Failed">Failed / Declined</option>
+                  </select>
+                  <select 
+                    className="filter-select"
+                    style={{ minWidth: 220 }}
+                    value=""
+                    onChange={(e) => {
+                      if (e.target.value && selectedContactIds.length > 0) {
+                        handleBulkSentimentUpdate(e.target.value);
+                      }
+                    }}
+                    disabled={selectedContactIds.length === 0}
+                  >
+                    <option value="" disabled hidden>Bulk Update Sentiment...</option>
+                    <option value="Unknown">Unknown / Uncontacted</option>
+                    <option value="Strong Support (Panel)">🟢 Strong Support (Panel)</option>
+                    <option value="Leaning Support (Anil Kumar only)">🟡 Leaning Support (Anil Kumar only)</option>
+                    <option value="Undecided / Needs Follow-up">🟠 Undecided / Needs Follow-up</option>
+                    <option value="Opposed">🔴 Opposed</option>
+                  </select>
+                </div>
+              </div>
 
               {/* Stats overview */}
               <div className="stats-grid" style={{ marginBottom: 24 }}>
@@ -1752,6 +1879,7 @@ export default function App() {
                 <table className="contacts-table">
                   <thead>
                     <tr>
+                      <th style={{ width: 40 }}><input type="checkbox" onChange={toggleSelectAll} checked={paginatedContacts.length > 0 && paginatedContacts.every(c => selectedContactIds.includes(c.id))} /></th>
                       <th>S.No</th>
                       <th>Code</th>
                       <th>Account Name</th>
@@ -1766,6 +1894,7 @@ export default function App() {
                     {paginatedContacts.length > 0 ? (
                       paginatedContacts.map((contact) => (
                         <tr key={contact.id}>
+                          <td><input type="checkbox" checked={selectedContactIds.includes(contact.id)} onChange={() => toggleContactSelect(contact.id)} /></td>
                           <td>{contact.s_no}</td>
                           <td>{contact.acc_code}</td>
                           <td style={{ fontWeight: 600, color: 'var(--color-text-white)' }}>{contact.account_name}</td>
@@ -1805,7 +1934,7 @@ export default function App() {
                       ))
                     ) : (
                       <tr>
-                        <td colSpan="8" style={{ textAlign: 'center', padding: 32, color: 'var(--color-text-muted)' }}>No contacts found.</td>
+                        <td colSpan="9" style={{ textAlign: 'center', padding: 32, color: 'var(--color-text-muted)' }}>No contacts found.</td>
                       </tr>
                     )}
                   </tbody>
@@ -1825,7 +1954,51 @@ export default function App() {
           {/* ==================== WHATSAPP CAMPAIGN TAB ==================== */}
           {activeTab === 'whatsapp' && (
             <div>
-              <h2 className="tab-title">WhatsApp Click-to-Chat outreach</h2>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24, flexWrap: 'wrap', gap: 12 }}>
+                <h2 className="tab-title" style={{ marginBottom: 0 }}>WhatsApp Click-to-Chat outreach</h2>
+                <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+                  {selectedContactIds.length > 0 && (
+                    <span style={{ fontSize: '14px', color: 'var(--color-text-secondary)' }}>
+                      {selectedContactIds.length} selected
+                    </span>
+                  )}
+                  <select 
+                    className="filter-select"
+                    style={{ minWidth: 220 }}
+                    value=""
+                    onChange={(e) => {
+                      if (e.target.value && selectedContactIds.length > 0) {
+                        handleBulkWhatsAppUpdate(e.target.value);
+                      }
+                    }}
+                    disabled={selectedContactIds.length === 0}
+                  >
+                    <option value="" disabled hidden>Bulk Update WhatsApp Status...</option>
+                    <option value="Pending">Pending</option>
+                    <option value="Sent">Sent</option>
+                    <option value="Delivered">Delivered</option>
+                    <option value="Failed">Failed</option>
+                  </select>
+                  <select 
+                    className="filter-select"
+                    style={{ minWidth: 220 }}
+                    value=""
+                    onChange={(e) => {
+                      if (e.target.value && selectedContactIds.length > 0) {
+                        handleBulkSentimentUpdate(e.target.value);
+                      }
+                    }}
+                    disabled={selectedContactIds.length === 0}
+                  >
+                    <option value="" disabled hidden>Bulk Update Sentiment...</option>
+                    <option value="Unknown">Unknown / Uncontacted</option>
+                    <option value="Strong Support (Panel)">🟢 Strong Support (Panel)</option>
+                    <option value="Leaning Support (Anil Kumar only)">🟡 Leaning Support (Anil Kumar only)</option>
+                    <option value="Undecided / Needs Follow-up">🟠 Undecided / Needs Follow-up</option>
+                    <option value="Opposed">🔴 Opposed</option>
+                  </select>
+                </div>
+              </div>
 
               {/* Stats Row */}
               <div className="stats-grid" style={{ marginBottom: 24 }}>
@@ -1914,6 +2087,7 @@ export default function App() {
                 <table className="contacts-table">
                   <thead>
                     <tr>
+                      <th style={{ width: 40 }}><input type="checkbox" onChange={toggleSelectAll} checked={paginatedContacts.length > 0 && paginatedContacts.every(c => selectedContactIds.includes(c.id))} /></th>
                       <th>S.No</th>
                       <th>Code</th>
                       <th>Account Name</th>
@@ -1928,6 +2102,7 @@ export default function App() {
                     {paginatedContacts.length > 0 ? (
                       paginatedContacts.map((contact) => (
                         <tr key={contact.id}>
+                          <td><input type="checkbox" checked={selectedContactIds.includes(contact.id)} onChange={() => toggleContactSelect(contact.id)} /></td>
                           <td>{contact.s_no}</td>
                           <td>{contact.acc_code}</td>
                           <td style={{ fontWeight: 600, color: 'var(--color-text-white)' }}>{contact.account_name}</td>
@@ -1960,7 +2135,7 @@ export default function App() {
                       ))
                     ) : (
                       <tr>
-                        <td colSpan="8" style={{ textAlign: 'center', padding: 32, color: 'var(--color-text-muted)' }}>No contacts found.</td>
+                        <td colSpan="9" style={{ textAlign: 'center', padding: 32, color: 'var(--color-text-muted)' }}>No contacts found.</td>
                       </tr>
                     )}
                   </tbody>
@@ -2119,6 +2294,24 @@ export default function App() {
                         {volunteers.map(name => (
                           <option key={name} value={name}>{name}</option>
                         ))}
+                      </select>
+                      <select 
+                        className="filter-select"
+                        style={{ padding: '4px 8px', fontSize: 12, height: 'auto', border: '1px solid var(--border-color)', margin: 0 }}
+                        defaultValue=""
+                        onChange={(e) => {
+                          if (e.target.value) {
+                            handleBulkSentimentUpdate(e.target.value);
+                            e.target.value = "";
+                          }
+                        }}
+                      >
+                        <option value="" disabled>Sentiment...</option>
+                        <option value="Unknown">Unknown / Uncontacted</option>
+                        <option value="Strong Support (Panel)">🟢 Strong Support (Panel)</option>
+                        <option value="Leaning Support (Anil Kumar only)">🟡 Leaning Support (Anil Kumar only)</option>
+                        <option value="Undecided / Needs Follow-up">🟠 Undecided / Needs Follow-up</option>
+                        <option value="Opposed">🔴 Opposed</option>
                       </select>
                     </div>
                   )}

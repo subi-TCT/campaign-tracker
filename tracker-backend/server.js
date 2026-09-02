@@ -902,7 +902,8 @@ app.get('/api/stats', async (req, res) => {
         pending: 0,
         secured: 0,
         lost: 0,
-        votedUnknown: 0
+        votedUnknown: 0,
+        totalLogged: 0
       },
       byEmirate: emirateRows.map(r => ({
         emirate: r.emirate,
@@ -934,50 +935,64 @@ app.get('/api/stats', async (req, res) => {
 
     // Fill counts
     emailStatuses.forEach(r => {
-      const status = r.email_status.toLowerCase();
-      if (status === 'pending') stats.email.pending = r.count;
-      else if (status === 'sent') stats.email.sent = r.count;
-      else if (status === 'undelivered') stats.email.undelivered = r.count;
+      const status = (r.email_status || '').toLowerCase();
+      const count = parseInt(r.count || 0, 10);
+      if (status === 'pending') stats.email.pending = count;
+      else if (status === 'sent') stats.email.sent = count;
+      else if (status === 'undelivered') stats.email.undelivered = count;
     });
 
     whatsappStatuses.forEach(r => {
-      const status = r.whatsapp_status.toLowerCase();
-      if (status === 'pending') stats.whatsapp.pending = r.count;
-      else if (status === 'sent') stats.whatsapp.sent = r.count;
-      else if (status === 'delivered') stats.whatsapp.delivered = r.count;
-      else if (status === 'failed') stats.whatsapp.failed = r.count;
+      const status = (r.whatsapp_status || '').toLowerCase();
+      const count = parseInt(r.count || 0, 10);
+      if (status === 'pending') stats.whatsapp.pending = count;
+      else if (status === 'sent') stats.whatsapp.sent = count;
+      else if (status === 'delivered') stats.whatsapp.delivered = count;
+      else if (status === 'failed') stats.whatsapp.failed = count;
     });
 
     callStatuses.forEach(r => {
-      const status = r.call_status.toLowerCase();
-      if (status === 'not called') stats.call.notCalled = r.count;
-      else if (status === 'connected') stats.call.connected = r.count;
-      else if (status === 'busy') stats.call.busy = r.count;
-      else if (status === 'no answer') stats.call.noAnswer = r.count;
-      else if (status === 'left message') stats.call.leftMessage = r.count;
-      else if (status === 'failed') stats.call.failed = r.count;
-      else if (status === 'no response') stats.call.noResponse = r.count;
-      else if (status === 'out of country') stats.call.outOfCountry = r.count;
-      else if (status === 'switched off') stats.call.switchedOff = r.count;
-      else if (status === 'reminder request') stats.call.reminderRequest = r.count;
+      const status = (r.call_status || '').toLowerCase();
+      const count = parseInt(r.count || 0, 10);
+      if (status === 'not called') stats.call.notCalled = count;
+      else if (status === 'connected') stats.call.connected = count;
+      else if (status === 'busy') stats.call.busy = count;
+      else if (status === 'no answer') stats.call.noAnswer = count;
+      else if (status === 'left message') stats.call.leftMessage = count;
+      else if (status === 'failed') stats.call.failed = count;
+      else if (status === 'no response') stats.call.noResponse = count;
+      else if (status === 'out of country') stats.call.outOfCountry = count;
+      else if (status === 'switched off') stats.call.switchedOff = count;
+      else if (status === 'reminder request') stats.call.reminderRequest = count;
     });
 
     reactionRows.forEach(r => {
-      const reaction = r.member_reaction;
-      if (reaction === 'Strong Support (Panel)') stats.reactions.strong = r.count;
-      else if (reaction === 'Leaning Support (Anil Kumar only)') stats.reactions.leaning = r.count;
-      else if (reaction === 'Undecided / Needs Follow-up') stats.reactions.undecided = r.count;
-      else if (reaction === 'Opposed') stats.reactions.opposed = r.count;
-      else stats.reactions.unknown += r.count;
+      const reaction = (r.member_reaction || '').trim();
+      const count = parseInt(r.count || 0, 10);
+      if (reaction === 'Strong Support (Panel)') stats.reactions.strong = count;
+      else if (reaction === 'Leaning Support (Anil Kumar only)') stats.reactions.leaning = count;
+      else if (reaction === 'Undecided / Needs Follow-up') stats.reactions.undecided = count;
+      else if (reaction === 'Opposed') stats.reactions.opposed = count;
+      else stats.reactions.unknown += count;
     });
 
     exitPollRows.forEach(r => {
-      const status = r.exit_poll_status;
-      if (status === 'Pending') stats.exitPoll.pending = r.count;
-      else if (status === 'Secured') stats.exitPoll.secured = r.count;
-      else if (status === 'Lost') stats.exitPoll.lost = r.count;
-      else if (status === 'Voted-Unknown') stats.exitPoll.votedUnknown = r.count;
+      const rawStatus = (r.exit_poll_status || '').trim();
+      const status = rawStatus.toLowerCase();
+      const count = parseInt(r.count || 0, 10);
+      if (status === 'secured') {
+        stats.exitPoll.secured += count;
+      } else if (status === 'lost') {
+        stats.exitPoll.lost += count;
+      } else if (status === 'voted-unknown' || status === 'votedunknown' || status === 'voted_unknown' || status === 'voted but secretive') {
+        stats.exitPoll.votedUnknown += count;
+      } else if (status === 'pending' || status === '' || status === 'unknown') {
+        stats.exitPoll.pending += count;
+      } else {
+        stats.exitPoll.votedUnknown += count;
+      }
     });
+    stats.exitPoll.totalLogged = stats.exitPoll.secured + stats.exitPoll.lost + stats.exitPoll.votedUnknown;
 
     res.json(stats);
   } catch (error) {

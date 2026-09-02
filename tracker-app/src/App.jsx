@@ -772,17 +772,17 @@ export default function App() {
   const emailProgressPct = Math.min((emailsSentToday / emailTarget) * 100, 100);
 
   // Exit Poll calculations
-  const securedVotes = stats.exitPoll.secured || 0;
+  const securedVotes = Number(stats.exitPoll?.secured) || 0;
   const exitPollProgressPct = Math.min((securedVotes / exitPollTarget) * 100, 100);
 
   // SVG Donut Chart calculation values
   const rReaction = stats.reactions;
   const reactionValues = [
-    { key: 'strong', value: rReaction.strong, ...SENTIMENT_META.strong },
-    { key: 'leaning', value: rReaction.leaning, ...SENTIMENT_META.leaning },
-    { key: 'undecided', value: rReaction.undecided, ...SENTIMENT_META.undecided },
-    { key: 'opposed', value: rReaction.opposed, ...SENTIMENT_META.opposed },
-    { key: 'unknown', value: rReaction.unknown, ...SENTIMENT_META.unknown }
+    { key: 'strong', value: Number(rReaction.strong) || 0, ...SENTIMENT_META.strong },
+    { key: 'leaning', value: Number(rReaction.leaning) || 0, ...SENTIMENT_META.leaning },
+    { key: 'undecided', value: Number(rReaction.undecided) || 0, ...SENTIMENT_META.undecided },
+    { key: 'opposed', value: Number(rReaction.opposed) || 0, ...SENTIMENT_META.opposed },
+    { key: 'unknown', value: Number(rReaction.unknown) || 0, ...SENTIMENT_META.unknown }
   ];
   
   const totalSentimentResponses = reactionValues.reduce((sum, item) => sum + item.value, 0) || 1;
@@ -1032,8 +1032,8 @@ export default function App() {
                     <span>WhatsApp outreach</span>
                     <div className="stat-icon"><MessageSquare size={20} /></div>
                   </div>
-                  <div className="stat-value">{stats.whatsapp.sent + stats.whatsapp.delivered}</div>
-                  <div className="stat-desc">{stats.whatsapp.failed} failed • {stats.whatsapp.pending} pending</div>
+                  <div className="stat-value">{(Number(stats.whatsapp?.sent) || 0) + (Number(stats.whatsapp?.delivered) || 0)}</div>
+                  <div className="stat-desc">{stats.whatsapp?.failed || 0} failed • {stats.whatsapp?.pending || 0} pending</div>
                 </div>
               </div>
 
@@ -1046,23 +1046,23 @@ export default function App() {
                   <div className="chart-container">
                     <div className="chart-bar-wrapper">
                       <div className="chart-bar-track">
-                        <div className="chart-bar" style={{ height: `${Math.round((stats.email.sent / stats.totalContacts) * 100)}%` }}></div>
+                        <div className="chart-bar" style={{ height: `${Math.round(((Number(stats.email?.sent) || 0) / (Number(stats.totalContacts) || 1)) * 100)}%` }}></div>
                       </div>
-                      <span className="chart-label">Email sent ({Math.round((stats.email.sent / stats.totalContacts) * 100)}%)</span>
+                      <span className="chart-label">Email sent ({Math.round(((Number(stats.email?.sent) || 0) / (Number(stats.totalContacts) || 1)) * 100)}%)</span>
                     </div>
 
                     <div className="chart-bar-wrapper">
                       <div className="chart-bar-track">
-                        <div className="chart-bar accent" style={{ height: `${Math.round(((stats.whatsapp.sent + stats.whatsapp.delivered) / stats.totalContacts) * 100)}%` }}></div>
+                        <div className="chart-bar accent" style={{ height: `${Math.round((((Number(stats.whatsapp?.sent) || 0) + (Number(stats.whatsapp?.delivered) || 0)) / (Number(stats.totalContacts) || 1)) * 100)}%` }}></div>
                       </div>
-                      <span className="chart-label">WhatsApp ({Math.round(((stats.whatsapp.sent + stats.whatsapp.delivered) / stats.totalContacts) * 100)}%)</span>
+                      <span className="chart-label">WhatsApp ({Math.round((((Number(stats.whatsapp?.sent) || 0) + (Number(stats.whatsapp?.delivered) || 0)) / (Number(stats.totalContacts) || 1)) * 100)}%)</span>
                     </div>
 
                     <div className="chart-bar-wrapper">
                       <div className="chart-bar-track">
-                        <div className="chart-bar success" style={{ height: `${Math.round((stats.call.connected / stats.totalContacts) * 100)}%` }}></div>
+                        <div className="chart-bar success" style={{ height: `${Math.round(((Number(stats.call?.connected) || 0) / (Number(stats.totalContacts) || 1)) * 100)}%` }}></div>
                       </div>
-                      <span className="chart-label">Connected Call ({Math.round((stats.call.connected / stats.totalContacts) * 100)}%)</span>
+                      <span className="chart-label">Connected Call ({Math.round(((Number(stats.call?.connected) || 0) / (Number(stats.totalContacts) || 1)) * 100)}%)</span>
                     </div>
                   </div>
                 </div>
@@ -1100,7 +1100,7 @@ export default function App() {
                       <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center' }}>
                         <span style={{ fontSize: '11px', color: 'var(--color-text-muted)', fontWeight: 600, textTransform: 'uppercase' }}>Sentiment</span>
                         <span style={{ fontSize: '18px', fontWeight: 'bold', color: 'var(--color-text-white)' }}>
-                          {Math.round(((rReaction.strong + rReaction.leaning) / totalSentimentResponses) * 100)}%
+                          {Math.round((((Number(rReaction.strong) || 0) + (Number(rReaction.leaning) || 0)) / (totalSentimentResponses || 1)) * 100)}%
                         </span>
                         <span style={{ fontSize: '9px', color: '#10b981', fontWeight: 600 }}>POSITIVE</span>
                       </div>
@@ -1417,23 +1417,23 @@ export default function App() {
               <div className="stats-grid" style={{ marginBottom: 24 }}>
                 <div className="stat-card success">
                   <div className="stat-header"><span>Secured Votes (Panel)</span></div>
-                  <div className="stat-value">{stats.exitPoll.secured}</div>
+                  <div className="stat-value">{Number(stats.exitPoll?.secured) || 0}</div>
                   <div className="stat-desc">Declared voted for Panel</div>
                 </div>
                 <div className="stat-card danger">
                   <div className="stat-header"><span>Lost Votes (Opposition)</span></div>
-                  <div className="stat-value">{stats.exitPoll.lost}</div>
+                  <div className="stat-value">{Number(stats.exitPoll?.lost) || 0}</div>
                   <div className="stat-desc">Declared voted for Opposition</div>
                 </div>
                 <div className="stat-card warning">
                   <div className="stat-header"><span>Secretive / Unknown</span></div>
-                  <div className="stat-value">{stats.exitPoll.votedUnknown}</div>
+                  <div className="stat-value">{Number(stats.exitPoll?.votedUnknown) || 0}</div>
                   <div className="stat-desc">Voted but kept response secret</div>
                 </div>
                 <div className="stat-card">
                   <div className="stat-header"><span>Total Booth Exits Logged</span></div>
                   <div className="stat-value">
-                    {stats.exitPoll.secured + stats.exitPoll.lost + stats.exitPoll.votedUnknown}
+                    {stats.exitPoll?.totalLogged !== undefined ? stats.exitPoll.totalLogged : (Number(stats.exitPoll?.secured) || 0) + (Number(stats.exitPoll?.lost) || 0) + (Number(stats.exitPoll?.votedUnknown) || 0)}
                   </div>
                   <div className="stat-desc">Out of {stats.totalContacts} total voters</div>
                 </div>

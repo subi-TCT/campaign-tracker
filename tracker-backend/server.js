@@ -4,15 +4,34 @@ const cors = require('cors');
 const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
 const xlsx = require('xlsx');
+const axios = require('axios');
+const crypto = require('crypto');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
+
+// E.164 Phone number formatting helper for SMS gateway (Textbee)
+const formatE164Mobile = (mobileRaw) => {
+  if (!mobileRaw) return '';
+  let cleaned = String(mobileRaw).replace(/\D/g, '');
+  if (!cleaned) return '';
+  if (cleaned.startsWith('05')) cleaned = '971' + cleaned.substring(1);
+  else if (cleaned.startsWith('5')) cleaned = '971' + cleaned;
+  if (!cleaned.startsWith('+')) cleaned = '+' + cleaned;
+  return cleaned;
+};
 
 app.use(cors({
   origin: process.env.FRONTEND_URL || '*',
   credentials: true
 }));
-app.use(express.json());
+
+// Capture rawBody for HMAC-SHA256 webhook signature verification
+app.use(express.json({
+  verify: (req, res, buf) => {
+    req.rawBody = buf;
+  }
+}));
 
 const fs = require('fs');
 let dbDir = process.env.DATABASE_DIR || __dirname;
@@ -199,6 +218,8 @@ const initPostgresDB = async () => {
           email_sent_date TEXT DEFAULT '',
           whatsapp_status TEXT DEFAULT 'Pending',
           whatsapp_sent_date TEXT DEFAULT '',
+          sms_status TEXT DEFAULT 'Pending',
+          sms_sent_date TEXT DEFAULT '',
           call_status TEXT DEFAULT 'Not Called',
           call_sent_date TEXT DEFAULT '',
           notes TEXT DEFAULT '',
@@ -225,6 +246,20 @@ const initPostgresDB = async () => {
         await pgPool.query("ALTER TABLE contacts ADD COLUMN IF NOT EXISTS assigned_to TEXT DEFAULT 'Unassigned'");
         await pgPool.query("ALTER TABLE contacts ADD COLUMN IF NOT EXISTS account_status TEXT DEFAULT 'Active'");
         await pgPool.query("ALTER TABLE contacts ADD COLUMN IF NOT EXISTS area TEXT");
+        await pgPool.query("ALTER TABLE contacts ADD COLUMN IF NOT EXISTS sms_status TEXT DEFAULT 'Pending'");
+        await pgPool.query("ALTER TABLE contacts ADD COLUMN IF NOT EXISTS sms_sent_date TEXT DEFAULT ''");
+        await pgPool.query(`
+          CREATE TABLE IF NOT EXISTS incoming_sms (
+            id SERIAL PRIMARY KEY,
+            sms_id TEXT,
+            sender TEXT,
+            contact_id INTEGER,
+            contact_name TEXT,
+            message TEXT,
+            received_at TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+          )
+        `);
       } catch (migrateErr) {
         console.log("PostgreSQL schema migrations ran successfully.");
       }
@@ -343,6 +378,8 @@ const initSqliteDB = () => {
             email_sent_date TEXT DEFAULT '',
             whatsapp_status TEXT DEFAULT 'Pending',
             whatsapp_sent_date TEXT DEFAULT '',
+            sms_status TEXT DEFAULT 'Pending',
+            sms_sent_date TEXT DEFAULT '',
             call_status TEXT DEFAULT 'Not Called',
             call_sent_date TEXT DEFAULT '',
             notes TEXT DEFAULT '',
@@ -436,6 +473,28 @@ const initSqliteDB = () => {
           if (alterErr && !alterErr.message.includes("duplicate column name") && !alterErr.message.includes("duplicate column")) {
             console.error("Migration error adding area:", alterErr.message);
           }
+        });
+        db.run("ALTER TABLE contacts ADD COLUMN sms_status TEXT DEFAULT 'Pending'", (alterErr) => {
+          if (alterErr && !alterErr.message.includes("duplicate column name") && !alterErr.message.includes("duplicate column")) {
+            console.error("Migration error adding sms_status:", alterErr.message);
+          }
+        });
+        db.run("ALTER TABLE contacts ADD COLUMN sms_sent_date TEXT DEFAULT ''", (alterErr) => {
+          if (alterErr && !alterErr.message.includes("duplicate column name") && !alterErr.message.includes("duplicate column")) {
+            console.error("Migration error adding sms_sent_date:", alterErr.message);
+          }
+        });
+        db.run(`CREATE TABLE IF NOT EXISTS incoming_sms (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          sms_id TEXT,
+          sender TEXT,
+          contact_id INTEGER,
+          contact_name TEXT,
+          message TEXT,
+          received_at TEXT,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )`, (err) => {
+          if (err) console.error("Error creating SQLite incoming_sms table:", err.message);
         });
 
         // Run volunteers seeding and Excel sync ONLY if SQLite database is completely empty on startup
@@ -565,6 +624,7 @@ app.get('/api/contacts', async (req, res) => {
       SELECT id, s_no, acc_code, account_name, mobile_number, email_id, 
              email_status, email_sent_date, 
              whatsapp_status, whatsapp_sent_date, 
+             sms_status, sms_sent_date,
              call_status, call_sent_date, notes,
              member_reaction, exit_poll_status,
              emirate, district, assigned_to, account_status, area
@@ -603,6 +663,8 @@ app.put('/api/contacts/:id', async (req, res) => {
     email_sent_date,
     whatsapp_status,
     whatsapp_sent_date,
+    sms_status,
+    sms_sent_date,
     call_status,
     call_sent_date,
     notes,
@@ -627,6 +689,8 @@ app.put('/api/contacts/:id', async (req, res) => {
       email_sent_date: email_sent_date !== undefined ? email_sent_date : existing.email_sent_date,
       whatsapp_status: whatsapp_status !== undefined ? whatsapp_status : existing.whatsapp_status,
       whatsapp_sent_date: whatsapp_sent_date !== undefined ? whatsapp_sent_date : existing.whatsapp_sent_date,
+      sms_status: sms_status !== undefined ? sms_status : existing.sms_status,
+      sms_sent_date: sms_sent_date !== undefined ? sms_sent_date : existing.sms_sent_date,
       call_status: call_status !== undefined ? call_status : existing.call_status,
       call_sent_date: call_sent_date !== undefined ? call_sent_date : existing.call_sent_date,
       notes: notes !== undefined ? notes : existing.notes,
@@ -643,6 +707,7 @@ app.put('/api/contacts/:id', async (req, res) => {
       UPDATE contacts 
       SET email_status = ?, email_sent_date = ?, 
           whatsapp_status = ?, whatsapp_sent_date = ?, 
+          sms_status = ?, sms_sent_date = ?,
           call_status = ?, call_sent_date = ?, notes = ?,
           member_reaction = ?, exit_poll_status = ?,
           emirate = ?, district = ?, assigned_to = ?,
@@ -653,6 +718,8 @@ app.put('/api/contacts/:id', async (req, res) => {
       updated.email_sent_date,
       updated.whatsapp_status,
       updated.whatsapp_sent_date,
+      updated.sms_status,
+      updated.sms_sent_date,
       updated.call_status,
       updated.call_sent_date,
       updated.notes,
@@ -763,6 +830,352 @@ app.post('/api/contacts/bulk-sentiment', async (req, res) => {
   }
 });
 
+// GET check if Textbee API key and webhook are configured
+app.get('/api/sms/config', (req, res) => {
+  res.json({
+    isConfigured: !!(process.env.TEXTBEE_API_KEY && process.env.TEXTBEE_API_KEY.trim()),
+    hasDeviceId: !!(process.env.TEXTBEE_DEVICE_ID && process.env.TEXTBEE_DEVICE_ID.trim()),
+    hasWebhookSecret: !!(process.env.TEXTBEE_WEBHOOK_SECRET && process.env.TEXTBEE_WEBHOOK_SECRET.trim()),
+    webhookUrl: '/api/sms/webhook'
+  });
+});
+
+// POST send single SMS via Textbee
+app.post('/api/sms/send', async (req, res) => {
+  const { id, mobileNumber, message } = req.body;
+  const apiKey = (process.env.TEXTBEE_API_KEY || '').trim();
+  const deviceId = (process.env.TEXTBEE_DEVICE_ID || '').trim();
+
+  if (!apiKey) {
+    return res.status(400).json({ error: 'TEXTBEE_API_KEY is not configured in backend .env file.' });
+  }
+
+  let targetPhone = mobileNumber;
+  let finalMessage = message;
+  let contact = null;
+
+  if (id) {
+    const [row] = await query('SELECT * FROM contacts WHERE id = ?', [id]);
+    if (!row) {
+      return res.status(404).json({ error: 'Contact not found' });
+    }
+    contact = row;
+    targetPhone = row.mobile_number;
+    if (message) {
+      finalMessage = message
+        .replace(/{Name}/g, row.account_name || '')
+        .replace(/{AccCode}/g, row.acc_code || '')
+        .replace(/{SerialNo}/g, String(row.s_no || ''));
+    }
+  }
+
+  const e164 = formatE164Mobile(targetPhone);
+  if (!e164 || e164.length < 8) {
+    if (contact) {
+      await run("UPDATE contacts SET sms_status = 'Failed' WHERE id = ?", [contact.id]);
+    }
+    return res.status(400).json({ error: 'Invalid or missing mobile number' });
+  }
+
+  try {
+    const payload = {
+      recipients: [e164],
+      message: finalMessage
+    };
+    if (deviceId) {
+      payload.deviceId = deviceId;
+    }
+
+    const response = await axios.post('https://api.textbee.dev/api/v1/gateway/send-sms', payload, {
+      headers: {
+        'x-api-key': apiKey,
+        'Content-Type': 'application/json'
+      },
+      timeout: 15000
+    });
+
+    const today = new Date().toISOString().split('T')[0];
+    if (contact) {
+      await run("UPDATE contacts SET sms_status = 'Sent', sms_sent_date = ? WHERE id = ?", [today, contact.id]);
+      const [updated] = await query('SELECT * FROM contacts WHERE id = ?', [contact.id]);
+      return res.json({ success: true, data: response.data, contact: updated });
+    }
+
+    res.json({ success: true, data: response.data });
+  } catch (error) {
+    console.error('Error sending SMS via Textbee:', error.response?.data || error.message);
+    if (contact) {
+      await run("UPDATE contacts SET sms_status = 'Failed' WHERE id = ?", [contact.id]);
+    }
+    res.status(500).json({ 
+      error: error.response?.data?.message || error.message || 'Failed to trigger Android SMS' 
+    });
+  }
+});
+
+// POST bulk broadcast SMS via Textbee with carrier pacing delay
+app.post('/api/sms/broadcast', async (req, res) => {
+  const { ids, messageTemplate, delayMs = 2000 } = req.body;
+  const apiKey = (process.env.TEXTBEE_API_KEY || '').trim();
+  const deviceId = (process.env.TEXTBEE_DEVICE_ID || '').trim();
+
+  if (!apiKey) {
+    return res.status(400).json({ error: 'TEXTBEE_API_KEY is not configured in backend .env file.' });
+  }
+
+  if (!Array.isArray(ids) || ids.length === 0) {
+    return res.status(400).json({ error: 'No contact IDs provided for broadcast.' });
+  }
+
+  if (!messageTemplate || !messageTemplate.trim()) {
+    return res.status(400).json({ error: 'Message template is required.' });
+  }
+
+  try {
+    const placeholders = ids.map(() => '?').join(',');
+    const contacts = await query(`SELECT * FROM contacts WHERE id IN (${placeholders})`, ids);
+    const today = new Date().toISOString().split('T')[0];
+
+    let sentCount = 0;
+    let failedCount = 0;
+    const results = [];
+
+    for (let i = 0; i < contacts.length; i++) {
+      const contact = contacts[i];
+      const e164 = formatE164Mobile(contact.mobile_number);
+
+      if (!e164 || e164.length < 8) {
+        await run("UPDATE contacts SET sms_status = 'Failed' WHERE id = ?", [contact.id]);
+        failedCount++;
+        results.push({ id: contact.id, name: contact.account_name, status: 'Failed', reason: 'Invalid phone number' });
+        continue;
+      }
+
+      const finalMsg = messageTemplate
+        .replace(/{Name}/g, contact.account_name || '')
+        .replace(/{AccCode}/g, contact.acc_code || '')
+        .replace(/{SerialNo}/g, String(contact.s_no || ''));
+
+      try {
+        const payload = {
+          recipients: [e164],
+          message: finalMsg
+        };
+        if (deviceId) {
+          payload.deviceId = deviceId;
+        }
+
+        await axios.post('https://api.textbee.dev/api/v1/gateway/send-sms', payload, {
+          headers: {
+            'x-api-key': apiKey,
+            'Content-Type': 'application/json'
+          },
+          timeout: 15000
+        });
+
+        await run("UPDATE contacts SET sms_status = 'Sent', sms_sent_date = ? WHERE id = ?", [today, contact.id]);
+        sentCount++;
+        results.push({ id: contact.id, name: contact.account_name, status: 'Sent' });
+      } catch (err) {
+        console.error(`Error sending SMS to ${contact.account_name} (${e164}):`, err.response?.data || err.message);
+        await run("UPDATE contacts SET sms_status = 'Failed' WHERE id = ?", [contact.id]);
+        failedCount++;
+        results.push({ id: contact.id, name: contact.account_name, status: 'Failed', reason: err.response?.data?.message || err.message });
+      }
+
+      // Carrier pacing delay between messages (if more messages remain)
+      if (i < contacts.length - 1 && delayMs > 0) {
+        await new Promise(r => setTimeout(r, delayMs));
+      }
+    }
+
+    res.json({
+      success: true,
+      total: contacts.length,
+      sentCount,
+      failedCount,
+      results
+    });
+  } catch (error) {
+    console.error('Error in SMS broadcast:', error);
+    res.status(500).json({ error: 'Database or server error during SMS broadcast' });
+  }
+});
+
+// POST bulk update sms status manually
+app.post('/api/contacts/bulk-sms', async (req, res) => {
+  const { ids, status, date } = req.body;
+  if (!Array.isArray(ids) || ids.length === 0) {
+    return res.status(400).json({ error: 'Invalid ids array' });
+  }
+
+  try {
+    const placeholders = ids.map(() => '?').join(',');
+    const sql = `
+      UPDATE contacts 
+      SET sms_status = ?, sms_sent_date = ? 
+      WHERE id IN (${placeholders})
+    `;
+    const result = await run(sql, [status, date, ...ids]);
+    res.json({ success: true, updated: result.changes });
+  } catch (error) {
+    console.error('Error in bulk sms update:', error);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+// Helper: Webhook signature verification (HMAC-SHA256)
+const verifyTextbeeSignature = (rawBody, signatureHeader, secret) => {
+  if (!secret) {
+    return { valid: true, warning: 'TEXTBEE_WEBHOOK_SECRET is not set in .env. Skipping HMAC verification.' };
+  }
+  if (!signatureHeader) {
+    return { valid: false, error: 'Missing X-Signature header' };
+  }
+  try {
+    const hmac = crypto.createHmac('sha256', secret);
+    const expectedSignature = hmac.update(rawBody || '').digest('hex');
+
+    const cleanSig = signatureHeader.trim().toLowerCase();
+    const sigBuf = Buffer.from(cleanSig, 'hex');
+    const expBuf = Buffer.from(expectedSignature, 'hex');
+
+    if (sigBuf.length !== expBuf.length || !crypto.timingSafeEqual(sigBuf, expBuf)) {
+      return { valid: false, error: 'Invalid HMAC-SHA256 signature' };
+    }
+    return { valid: true };
+  } catch (err) {
+    return { valid: false, error: `Signature verification exception: ${err.message}` };
+  }
+};
+
+// Helper: Robust phone search matching local & international formats
+const findContactByPhone = async (phoneNumber) => {
+  if (!phoneNumber) return null;
+  const digits = String(phoneNumber).replace(/\D/g, '');
+  if (!digits || digits.length < 7) return null;
+
+  const last9 = digits.slice(-9);
+  const last7 = digits.slice(-7);
+  const e164 = formatE164Mobile(phoneNumber);
+
+  const rows = await query(`
+    SELECT * FROM contacts 
+    WHERE mobile_number = ? 
+       OR mobile_number = ? 
+       OR mobile_number LIKE ? 
+       OR mobile_number LIKE ?
+    LIMIT 1
+  `, [phoneNumber, e164, `%${last9}%`, `%${last7}%`]);
+
+  return rows && rows.length > 0 ? rows[0] : null;
+};
+
+// POST /api/sms/webhook - Textbee Webhook endpoint
+app.post('/api/sms/webhook', async (req, res) => {
+  const signature = req.headers['x-signature'] || req.headers['x-hub-signature'];
+  const secret = (process.env.TEXTBEE_WEBHOOK_SECRET || '').trim();
+
+  // Signature check
+  const verification = verifyTextbeeSignature(req.rawBody, signature, secret);
+  if (!verification.valid) {
+    console.warn(`[Textbee Webhook] Rejected: ${verification.error}`);
+    return res.status(401).json({ error: verification.error });
+  }
+
+  if (verification.warning) {
+    console.warn(`[Textbee Webhook] Notice: ${verification.warning}`);
+  }
+
+  const payload = req.body || {};
+  const eventType = payload.webhookEvent || payload.event || '';
+  console.log(`[Textbee Webhook] Received event: ${eventType || 'UNKNOWN'}`);
+
+  // Return 200 OK immediately (< 50ms) to satisfy Textbee 10-second timeout window
+  res.status(200).json({ success: true, message: 'Webhook event received' });
+
+  // Process event in background
+  try {
+    const today = new Date().toISOString().split('T')[0];
+
+    // Case 1: Status Update Events (MESSAGE_DELIVERED, MESSAGE_SENT, MESSAGE_FAILED, SMS_STATUS_UPDATED)
+    if (
+      eventType === 'MESSAGE_DELIVERED' ||
+      eventType === 'MESSAGE_SENT' ||
+      eventType === 'MESSAGE_FAILED' ||
+      eventType === 'SMS_STATUS_UPDATED' ||
+      payload.status
+    ) {
+      const recipientPhone = payload.recipient || payload.recipients?.[0] || payload.to || payload.phone || payload.sender;
+      const statusRaw = (payload.status || eventType || '').toUpperCase();
+
+      let targetStatus = 'Sent';
+      if (statusRaw.includes('FAIL') || statusRaw.includes('REJECT') || statusRaw.includes('UNDELIV')) {
+        targetStatus = 'Failed';
+      } else if (statusRaw.includes('DELIVER') || statusRaw.includes('SENT') || statusRaw.includes('SUCCESS')) {
+        targetStatus = 'Sent';
+      }
+
+      if (recipientPhone) {
+        const contact = await findContactByPhone(recipientPhone);
+        if (contact) {
+          await run(
+            "UPDATE contacts SET sms_status = ?, sms_sent_date = ? WHERE id = ?",
+            [targetStatus, today, contact.id]
+          );
+          console.log(`[Textbee Webhook] Updated #${contact.id} (${contact.account_name}) SMS status to ${targetStatus}`);
+        }
+      }
+    }
+
+    // Case 2: Incoming Message Events (MESSAGE_RECEIVED)
+    if (eventType === 'MESSAGE_RECEIVED' || (!eventType && payload.sender && payload.message)) {
+      const senderPhone = payload.sender;
+      const messageText = payload.message || '';
+      const smsId = payload.smsId || payload.id || '';
+      const receivedAt = payload.receivedAt || new Date().toISOString();
+
+      const contact = await findContactByPhone(senderPhone);
+      const contactId = contact ? contact.id : null;
+      const contactName = contact ? contact.account_name : 'Unknown';
+
+      await run(`
+        INSERT INTO incoming_sms (sms_id, sender, contact_id, contact_name, message, received_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `, [smsId, senderPhone, contactId, contactName, messageText, receivedAt]);
+
+      console.log(`[Textbee Webhook] Recorded incoming SMS from ${contactName} (${senderPhone}): "${messageText}"`);
+
+      // Append note to contact record
+      if (contact) {
+        const timeStr = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+        const dateStr = new Date().toLocaleDateString('en-GB');
+        const noteEntry = `[SMS In ${dateStr} ${timeStr}]: ${messageText}`;
+        const updatedNotes = contact.notes ? `${contact.notes}\n${noteEntry}` : noteEntry;
+        await run("UPDATE contacts SET notes = ? WHERE id = ?", [updatedNotes, contact.id]);
+      }
+    }
+  } catch (err) {
+    console.error('[Textbee Webhook] Error processing event:', err);
+  }
+});
+
+// GET /api/sms/inbox - Retrieve recent incoming SMS messages
+app.get('/api/sms/inbox', async (req, res) => {
+  try {
+    const limit = parseInt(req.query.limit, 10) || 50;
+    const rows = await query(`
+      SELECT * FROM incoming_sms 
+      ORDER BY id DESC 
+      LIMIT ?
+    `, [limit]);
+    res.json(rows || []);
+  } catch (error) {
+    console.error('Error fetching incoming SMS inbox:', error);
+    res.status(500).json({ error: 'Failed to fetch incoming SMS inbox' });
+  }
+});
+
 // GET campaign analytics / stats
 app.get('/api/stats', async (req, res) => {
   const today = req.query.today || new Date().toISOString().split('T')[0];
@@ -802,6 +1215,8 @@ app.get('/api/stats', async (req, res) => {
     const whatsappStatuses = await query("SELECT whatsapp_status, count(*) as count FROM contacts WHERE account_status = 'Active' GROUP BY whatsapp_status");
     // Call campaign status counts
     const callStatuses = await query("SELECT call_status, count(*) as count FROM contacts WHERE account_status = 'Active' GROUP BY call_status");
+    // SMS campaign status counts
+    const smsStatuses = await query("SELECT sms_status, count(*) as count FROM contacts WHERE account_status = 'Active' GROUP BY sms_status");
 
     // Sentiment breakdown (member_reaction)
     const reactionRows = await query("SELECT member_reaction, count(*) as count FROM contacts WHERE account_status = 'Active' GROUP BY member_reaction");
@@ -813,6 +1228,7 @@ app.get('/api/stats', async (req, res) => {
     const [emailTodayRow] = await query("SELECT count(*) as count FROM contacts WHERE email_status = 'Sent' AND email_sent_date = ? AND account_status = 'Active'", [today]);
     const [whatsappTodayRow] = await query("SELECT count(*) as count FROM contacts WHERE whatsapp_status = 'Sent' AND whatsapp_sent_date = ? AND account_status = 'Active'", [today]);
     const [callTodayRow] = await query("SELECT count(*) as count FROM contacts WHERE call_status != 'Not Called' AND call_sent_date = ? AND account_status = 'Active'", [today]);
+    const [smsTodayRow] = await query("SELECT count(*) as count FROM contacts WHERE sms_status = 'Sent' AND sms_sent_date = ? AND account_status = 'Active'", [today]);
 
     // Emirate grouping
     const emirateRows = await query(`
@@ -877,6 +1293,12 @@ app.get('/api/stats', async (req, res) => {
         delivered: 0,
         failed: 0,
         sentToday: parseInt(whatsappTodayRow.count || 0, 10)
+      },
+      sms: {
+        pending: 0,
+        sent: 0,
+        failed: 0,
+        sentToday: parseInt(smsTodayRow.count || 0, 10)
       },
       call: {
         notCalled: 0,
@@ -949,6 +1371,14 @@ app.get('/api/stats', async (req, res) => {
       else if (status === 'sent') stats.whatsapp.sent = count;
       else if (status === 'delivered') stats.whatsapp.delivered = count;
       else if (status === 'failed') stats.whatsapp.failed = count;
+    });
+
+    smsStatuses.forEach(r => {
+      const status = (r.sms_status || '').toLowerCase();
+      const count = parseInt(r.count || 0, 10);
+      if (status === 'pending') stats.sms.pending = count;
+      else if (status === 'sent') stats.sms.sent = count;
+      else if (status === 'failed') stats.sms.failed = count;
     });
 
     callStatuses.forEach(r => {

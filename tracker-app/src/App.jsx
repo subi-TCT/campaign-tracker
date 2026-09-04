@@ -3,7 +3,8 @@ import {
   Users, Mail, Phone, MessageSquare, AlertTriangle, Search, 
   ChevronLeft, ChevronRight, CheckCircle, Clock, Edit2, 
   Plus, FileText, Settings, HelpCircle, Save, ExternalLink,
-  Sun, Moon, Upload, AlertCircle, X, Vote, Award, BarChart2, Map, Menu
+  Sun, Moon, Upload, AlertCircle, X, Vote, Award, BarChart2, Map, Menu,
+  Smartphone, Send, Inbox, RefreshCw
 } from 'lucide-react';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001/api';
@@ -60,9 +61,18 @@ export default function App() {
   const [emailFilter, setEmailFilter] = useState('All');
   const [callFilter, setCallFilter] = useState('All');
   const [whatsappFilter, setWhatsappFilter] = useState('All');
+  const [smsFilter, setSmsFilter] = useState('All');
   const [qualityFilter, setQualityFilter] = useState('All');
   const [sentimentFilter, setSentimentFilter] = useState('All');
   const [statusFilter, setStatusFilter] = useState('Active');
+
+  // Textbee SMS Gateway states
+  const [textbeeConfig, setTextbeeConfig] = useState({ isConfigured: false, hasDeviceId: false });
+  const [isSendingSms, setIsSendingSms] = useState(false);
+  const [smsBroadcastProgress, setSmsBroadcastProgress] = useState(null);
+  const [testSmsPhone, setTestSmsPhone] = useState('');
+  const [incomingSmsList, setIncomingSmsList] = useState([]);
+  const [showSmsInboxModal, setShowSmsInboxModal] = useState(false);
 
   // Volunteer management states
   const [volunteers, setVolunteers] = useState([]);
@@ -97,7 +107,8 @@ export default function App() {
   const [templates, setTemplates] = useState({
     whatsapp: "Dear {Name},\n\nKindly support Anil Kumar K G Pillai (Managing Committee Candidate - Serial No. 3) & our 7-candidate panel for the Managing Committee Selection on Sep 6th, 2026 (8 AM onwards). Your valuable vote is critical for our success.\n\nThank you,\nCampaign Team",
     email: "Dear {Name},\n\nWe hope this email finds you well.\n\nWe kindly request your valuable vote and support for Anil Kumar K G Pillai (Managing Committee Candidate, Serial No. 3) and our 7-candidate panel in the upcoming Managing Committee Selection on Sunday, September 6, 2026.\n\nYour support will ensure strong leadership and progress.\n\nBest regards,\nCampaign Committee",
-    callScript: "Hello {Name}, calling from the election committee. We request your support for Managing Committee candidate Anil Kumar K G Pillai (Serial No. 3) and our 7-candidate panel in the selection on September 6th at 8:00 AM. May we count on your support?"
+    callScript: "Hello {Name}, calling from the election committee. We request your support for Managing Committee candidate Anil Kumar K G Pillai (Serial No. 3) and our 7-candidate panel in the selection on September 6th at 8:00 AM. May we count on your support?",
+    sms: "Dear {Name}, please support Anil Kumar K G Pillai (Serial No. 3) & our 7-candidate panel for Managing Committee Selection on Sep 6th. Your vote is vital. Thank you!"
   });
 
   // Panel Candidates (prefilled with our 7-candidate Managing Committee panel)
@@ -152,11 +163,32 @@ export default function App() {
       setContacts(contactsData);
       setStats(statsData);
       setError(null);
+
+      // Query Textbee configuration status
+      fetch(`${API_BASE}/sms/config`)
+        .then(r => r.ok ? r.json() : null)
+        .then(cfg => { if (cfg) setTextbeeConfig(cfg); })
+        .catch(() => {});
+
+      // Query incoming SMS messages
+      fetchIncomingSms();
     } catch (err) {
       console.error(err);
       setError('Could not connect to the local backend. Please ensure the backend server is running on http://localhost:3001.');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchIncomingSms = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/sms/inbox?limit=50`);
+      if (res.ok) {
+        const data = await res.json();
+        setIncomingSmsList(data || []);
+      }
+    } catch (err) {
+      console.error('Error fetching incoming SMS inbox:', err);
     }
   };
 
@@ -416,6 +448,146 @@ export default function App() {
     }
   };
 
+  // Bulk update SMS status manually
+  const handleBulkSmsUpdate = async (status, idsToUpdate = null) => {
+    const ids = idsToUpdate || selectedContactIds;
+    if (ids.length === 0) return;
+    try {
+      const today = getTodayString();
+      const res = await fetch(`${API_BASE}/contacts/bulk-sms`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ids,
+          status,
+          date: status === 'Sent' ? today : ''
+        })
+      });
+      if (!res.ok) throw new Error('Bulk SMS update failed');
+      
+      if (!idsToUpdate) setSelectedContactIds([]);
+      await fetchData();
+    } catch (err) {
+      console.error(err);
+      alert('Bulk SMS status update failed.');
+    }
+  };
+
+  // Send single SMS via Textbee
+  const handleSendSingleSms = async (contact) => {
+    if (!contact.mobile_number) {
+      alert('This contact has no mobile number recorded.');
+      return;
+    }
+    if (!window.confirm(`Send SMS to ${contact.account_name} (${contact.mobile_number}) via connected Android phone?`)) {
+      return;
+    }
+    setIsSendingSms(true);
+    try {
+      const res = await fetch(`${API_BASE}/sms/send`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: contact.id,
+          message: templates.sms
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.error || 'Failed to send SMS.');
+      } else {
+        await fetchData();
+        alert(`SMS dispatched successfully to ${contact.account_name}!`);
+      }
+    } catch (err) {
+      console.error(err);
+      alert('Network or server error while sending SMS.');
+    } finally {
+      setIsSendingSms(false);
+    }
+  };
+
+  // Send test SMS to arbitrary number
+  const handleSendTestSms = async () => {
+    if (!testSmsPhone || !testSmsPhone.trim()) {
+      alert('Please enter a mobile number with country code (e.g., +971501234567) to send a test SMS.');
+      return;
+    }
+    setIsSendingSms(true);
+    try {
+      const res = await fetch(`${API_BASE}/sms/send`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          mobileNumber: testSmsPhone.trim(),
+          message: templates.sms
+            .replace(/{Name}/g, 'Voter')
+            .replace(/{AccCode}/g, 'L001')
+            .replace(/{SerialNo}/g, '3')
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.error || 'Failed to send test SMS. Make sure TEXTBEE_API_KEY is set in backend .env');
+      } else {
+        alert(`Test SMS successfully sent to ${testSmsPhone}! Please check your recipient phone.`);
+      }
+    } catch (err) {
+      console.error(err);
+      alert('Network or server error sending test SMS.');
+    } finally {
+      setIsSendingSms(false);
+    }
+  };
+
+  // Broadcast SMS to selected or all filtered contacts with carrier pacing
+  const handleBroadcastSms = async (targetIds) => {
+    const idsToSend = targetIds || selectedContactIds;
+    if (idsToSend.length === 0) {
+      alert('No contacts selected for SMS broadcast.');
+      return;
+    }
+
+    if (!window.confirm(`Broadcast SMS to ${idsToSend.length} voter(s) via your connected Android phone?\n\n• Each SMS will be personalized with the voter's name.\n• A 2-second carrier pacing delay is applied between messages to prevent SIM blocking.`)) {
+      return;
+    }
+
+    setIsSendingSms(true);
+    setSmsBroadcastProgress({
+      active: true,
+      current: 0,
+      total: idsToSend.length,
+      sent: 0,
+      failed: 0
+    });
+
+    try {
+      const res = await fetch(`${API_BASE}/sms/broadcast`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ids: idsToSend,
+          messageTemplate: templates.sms,
+          delayMs: 2000
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.error || 'Error during SMS broadcast.');
+      } else {
+        alert(`Broadcast Finished!\n• Successfully Sent: ${data.sentCount}\n• Failed/Skipped: ${data.failedCount}\n• Total Processed: ${data.total}`);
+        setSelectedContactIds([]);
+        await fetchData();
+      }
+    } catch (err) {
+      console.error(err);
+      alert('Error during SMS broadcast process.');
+    } finally {
+      setIsSendingSms(false);
+      setSmsBroadcastProgress(null);
+    }
+  };
+
   // Analyze Copy-Pasted Email List
   const handleAnalyzeImportText = () => {
     if (!importRawText.trim()) {
@@ -552,7 +724,7 @@ export default function App() {
     const listToExport = exportFiltered ? filteredContacts : contacts;
     if (listToExport.length === 0) return;
     
-    const headers = ['S.No', 'AccCode', 'AccountName', 'Mobile Number', 'Email ID', 'Email Status', 'Email Sent Date', 'WhatsApp Status', 'Call Status', 'Call Sent Date', 'Notes', 'Voter Sentiment', 'Exit Poll Status'];
+    const headers = ['S.No', 'AccCode', 'AccountName', 'Mobile Number', 'Email ID', 'Email Status', 'Email Sent Date', 'WhatsApp Status', 'SMS Status', 'SMS Sent Date', 'Call Status', 'Call Sent Date', 'Notes', 'Voter Sentiment', 'Exit Poll Status'];
     const rows = listToExport.map(c => [
       c.s_no,
       c.acc_code,
@@ -562,6 +734,8 @@ export default function App() {
       c.email_status,
       c.email_sent_date,
       c.whatsapp_status,
+      c.sms_status || 'Pending',
+      c.sms_sent_date || '',
       c.call_status,
       c.call_sent_date,
       c.notes,
@@ -586,6 +760,8 @@ export default function App() {
         filename = `call_center_${callFilter.toLowerCase().replace(' ', '_')}_contacts.csv`;
       } else if (activeTab === 'whatsapp') {
         filename = `whatsapp_campaign_${whatsappFilter.toLowerCase()}_contacts.csv`;
+      } else if (activeTab === 'sms') {
+        filename = `sms_campaign_${smsFilter.toLowerCase()}_contacts.csv`;
       } else {
         filename = `campaign_${activeTab}_filtered_contacts.csv`;
       }
@@ -615,6 +791,8 @@ export default function App() {
         email_status: selectedContact.email_status,
         email_sent_date: selectedContact.email_sent_date,
         whatsapp_status: selectedContact.whatsapp_status,
+        sms_status: selectedContact.sms_status,
+        sms_sent_date: selectedContact.sms_sent_date,
         call_status: selectedContact.call_status,
         call_sent_date: selectedContact.call_sent_date,
         notes: selectedContact.notes,
@@ -670,6 +848,10 @@ export default function App() {
       if (whatsappFilter !== 'All') {
         list = list.filter(c => c.whatsapp_status === whatsappFilter);
       }
+    } else if (activeTab === 'sms') {
+      if (smsFilter !== 'All') {
+        list = list.filter(c => (c.sms_status || 'Pending') === smsFilter);
+      }
     } else if (activeTab === 'quality') {
       if (qualityFilter === 'Missing Email') {
         list = list.filter(c => !c.email_id);
@@ -694,8 +876,8 @@ export default function App() {
       list = list.filter(c => c.district === districtFilter);
     }
 
-    // Volunteer Filter (Call Center & WhatsApp tabs only)
-    if ((activeTab === 'call' || activeTab === 'whatsapp') && assignedToFilter !== 'All') {
+    // Volunteer Filter (Call Center, WhatsApp & SMS tabs)
+    if ((activeTab === 'call' || activeTab === 'whatsapp' || activeTab === 'sms') && assignedToFilter !== 'All') {
       list = list.filter(c => c.assigned_to === assignedToFilter);
     }
 
@@ -868,6 +1050,12 @@ export default function App() {
               <button className={`nav-link ${activeTab === 'whatsapp' ? 'active' : ''}`} onClick={() => selectTab('whatsapp', true)}>
                 <MessageSquare size={18} />
                 WhatsApp Campaign
+              </button>
+            </li>
+            <li className="nav-item">
+              <button className={`nav-link ${activeTab === 'sms' ? 'active' : ''}`} onClick={() => selectTab('sms', true)}>
+                <Smartphone size={18} />
+                SMS Campaign (Textbee)
               </button>
             </li>
             <li className="nav-item">
@@ -2152,6 +2340,377 @@ export default function App() {
             </div>
           )}
 
+          {/* ==================== SMS CAMPAIGN (TEXTBEE) TAB ==================== */}
+          {activeTab === 'sms' && (
+            <div>
+              {/* Header Bar */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24, flexWrap: 'wrap', gap: 12 }}>
+                <div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                    <h2 className="tab-title" style={{ marginBottom: 0 }}>SMS Campaign (Textbee Android Gateway)</h2>
+                    {textbeeConfig.isConfigured ? (
+                      <span style={{ fontSize: '11px', background: 'rgba(16, 185, 129, 0.15)', color: '#10b981', border: '1px solid rgba(16, 185, 129, 0.3)', padding: '2px 8px', borderRadius: '12px', fontWeight: 600 }}>
+                        ● Android Gateway Ready
+                      </span>
+                    ) : (
+                      <span style={{ fontSize: '11px', background: 'rgba(245, 158, 11, 0.15)', color: '#fbbf24', border: '1px solid rgba(245, 158, 11, 0.3)', padding: '2px 8px', borderRadius: '12px', fontWeight: 600 }}>
+                        ⚠ Set TEXTBEE_API_KEY in backend .env
+                      </span>
+                    )}
+                    {textbeeConfig.hasWebhookSecret ? (
+                      <span style={{ fontSize: '11px', background: 'rgba(59, 130, 246, 0.15)', color: '#60a5fa', border: '1px solid rgba(59, 130, 246, 0.3)', padding: '2px 8px', borderRadius: '12px', fontWeight: 600 }}>
+                        ● Webhook Verified (HMAC)
+                      </span>
+                    ) : (
+                      <span style={{ fontSize: '11px', background: 'rgba(107, 114, 128, 0.15)', color: 'var(--color-text-muted)', border: '1px solid var(--border-color)', padding: '2px 8px', borderRadius: '12px' }} title="Add TEXTBEE_WEBHOOK_SECRET in backend .env">
+                        Webhook: /api/sms/webhook
+                      </span>
+                    )}
+                  </div>
+                  <p style={{ color: 'var(--color-text-secondary)', fontSize: '13px', marginTop: 4 }}>
+                    Dispatches personalized SMS messages directly via connected Android phone SIM. Webhook receives real-time delivery status and voter SMS replies.
+                  </p>
+                </div>
+
+                <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <button
+                    className="btn"
+                    onClick={() => { fetchIncomingSms(); setShowSmsInboxModal(true); }}
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: 6, position: 'relative' }}
+                  >
+                    <Inbox size={14} /> SMS Inbox / Replies
+                    {incomingSmsList.length > 0 && (
+                      <span style={{
+                        background: '#3b82f6',
+                        color: '#fff',
+                        fontSize: 10,
+                        padding: '1px 6px',
+                        borderRadius: 10,
+                        fontWeight: 700
+                      }}>
+                        {incomingSmsList.length}
+                      </span>
+                    )}
+                  </button>
+                  {selectedContactIds.length > 0 && (
+                    <span style={{ fontSize: '14px', color: 'var(--color-text-secondary)' }}>
+                      {selectedContactIds.length} selected
+                    </span>
+                  )}
+                  <button 
+                    className="btn primary" 
+                    disabled={selectedContactIds.length === 0 || isSendingSms}
+                    onClick={() => handleBroadcastSms(selectedContactIds)}
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                  >
+                    <Send size={14} /> Broadcast Selected ({selectedContactIds.length})
+                  </button>
+                  <select 
+                    className="filter-select"
+                    style={{ minWidth: 200 }}
+                    value=""
+                    onChange={(e) => {
+                      if (e.target.value && selectedContactIds.length > 0) {
+                        handleBulkSmsUpdate(e.target.value);
+                      }
+                    }}
+                    disabled={selectedContactIds.length === 0}
+                  >
+                    <option value="" disabled hidden>Bulk Update SMS Status...</option>
+                    <option value="Pending">Pending</option>
+                    <option value="Sent">Sent</option>
+                    <option value="Failed">Failed</option>
+                  </select>
+                  <select 
+                    className="filter-select"
+                    style={{ minWidth: 200 }}
+                    value=""
+                    onChange={(e) => {
+                      if (e.target.value && selectedContactIds.length > 0) {
+                        handleBulkSentimentUpdate(e.target.value);
+                      }
+                    }}
+                    disabled={selectedContactIds.length === 0}
+                  >
+                    <option value="" disabled hidden>Bulk Update Sentiment...</option>
+                    <option value="Unknown">Unknown / Uncontacted</option>
+                    <option value="Strong Support (Panel)">🟢 Strong Support (Panel)</option>
+                    <option value="Leaning Support (Anil Kumar only)">🟡 Leaning Support (Anil Kumar only)</option>
+                    <option value="Undecided / Needs Follow-up">🟠 Undecided / Needs Follow-up</option>
+                    <option value="Opposed">🔴 Opposed</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Top Section: SMS Composer & Test Panel */}
+              <div className="glass-panel" style={{ padding: '20px 24px', marginBottom: 24, border: '1px solid var(--border-color)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, flexWrap: 'wrap', gap: 8 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <Smartphone size={18} color="#ec4899" />
+                    <h3 className="panel-title" style={{ margin: 0, fontSize: 15 }}>SMS Message Composer</h3>
+                  </div>
+                  <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                    <span style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>Insert Tag:</span>
+                    <button 
+                      type="button" 
+                      className="btn" 
+                      style={{ padding: '2px 8px', fontSize: 11 }}
+                      onClick={() => setTemplates(p => ({ ...p, sms: p.sms + ' {Name}' }))}
+                    >
+                      + &#123;Name&#125;
+                    </button>
+                    <button 
+                      type="button" 
+                      className="btn" 
+                      style={{ padding: '2px 8px', fontSize: 11 }}
+                      onClick={() => setTemplates(p => ({ ...p, sms: p.sms + ' {SerialNo}' }))}
+                    >
+                      + &#123;SerialNo&#125;
+                    </button>
+                    <button 
+                      type="button" 
+                      className="btn" 
+                      style={{ padding: '2px 8px', fontSize: 11 }}
+                      onClick={() => setTemplates(p => ({ ...p, sms: p.sms + ' {AccCode}' }))}
+                    >
+                      + &#123;AccCode&#125;
+                    </button>
+                  </div>
+                </div>
+
+                <textarea 
+                  className="drawer-textarea"
+                  style={{ minHeight: '84px', fontSize: 14, fontFamily: 'inherit', resize: 'vertical', width: '100%', marginBottom: 12 }}
+                  value={templates.sms}
+                  onChange={(e) => setTemplates(p => ({ ...p, sms: e.target.value }))}
+                  placeholder="Enter SMS message template with tags..."
+                />
+
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12, paddingTop: 6, borderTop: '1px solid var(--border-color)' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12, fontSize: 12, color: 'var(--color-text-secondary)' }}>
+                    <span>
+                      Length: <strong style={{ color: templates.sms.length > 160 ? '#f59e0b' : 'var(--color-text-white)' }}>{templates.sms.length}</strong> chars
+                      &nbsp;(~{Math.ceil(templates.sms.length / 160) || 1} SMS segment{templates.sms.length > 160 ? 's' : ''})
+                    </span>
+                    <span>•</span>
+                    <span style={{ color: '#10b981' }}>✓ 2-second carrier pacing enabled</span>
+                  </div>
+
+                  {/* Send Test SMS Box */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <input 
+                      type="text" 
+                      className="search-input" 
+                      placeholder="e.g. +971501234567" 
+                      value={testSmsPhone}
+                      onChange={(e) => setTestSmsPhone(e.target.value)}
+                      style={{ width: 180, padding: '6px 10px', fontSize: 12 }}
+                    />
+                    <button 
+                      className="btn" 
+                      onClick={handleSendTestSms}
+                      disabled={isSendingSms || !testSmsPhone.trim()}
+                      style={{ fontSize: 12, padding: '6px 12px', whiteSpace: 'nowrap' }}
+                    >
+                      <Send size={12} /> Send Test SMS
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Stats Row */}
+              <div className="stats-grid" style={{ marginBottom: 24 }}>
+                <div className="stat-card">
+                  <div className="stat-header"><span>Sent Today</span></div>
+                  <div className="stat-value">{stats?.sms?.sentToday || 0}</div>
+                  <div className="stat-desc">SMS dispatched today via phone</div>
+                </div>
+                <div className="stat-card success">
+                  <div className="stat-header"><span>Total Sent</span></div>
+                  <div className="stat-value">{stats?.sms?.sent || 0}</div>
+                  <div className="stat-desc">Confirmed dispatched to voter</div>
+                </div>
+                <div className="stat-card danger">
+                  <div className="stat-header"><span>Failed / Error</span></div>
+                  <div className="stat-value">{stats?.sms?.failed || 0}</div>
+                  <div className="stat-desc">Invalid mobile or carrier error</div>
+                </div>
+                <div className="stat-card warning">
+                  <div className="stat-header"><span>Pending Outreach</span></div>
+                  <div className="stat-value">{stats?.sms?.pending || 0}</div>
+                  <div className="stat-desc">Voters waiting for SMS</div>
+                </div>
+              </div>
+
+              {/* Controls bar */}
+              <div className="controls-bar">
+                <div className="search-wrapper">
+                  <Search className="search-icon" size={18} />
+                  <input
+                    type="text"
+                    className="search-input"
+                    placeholder="Search by voter name, AccCode, mobile..."
+                    value={searchQuery}
+                    onChange={(e) => {
+                      setSearchQuery(e.target.value);
+                      setCurrentPage(1);
+                    }}
+                  />
+                </div>
+
+                <div className="filter-group">
+                  <select 
+                    className="filter-select"
+                    value={smsFilter}
+                    onChange={(e) => {
+                      setSmsFilter(e.target.value);
+                      setCurrentPage(1);
+                    }}
+                  >
+                    <option value="All">All SMS Statuses</option>
+                    <option value="Pending">Pending</option>
+                    <option value="Sent">Sent</option>
+                    <option value="Failed">Failed</option>
+                  </select>
+
+                  <select 
+                    className="filter-select"
+                    value={sentimentFilter}
+                    onChange={(e) => {
+                      setSentimentFilter(e.target.value);
+                      setCurrentPage(1);
+                    }}
+                  >
+                    <option value="All">All Sentiments</option>
+                    <option value="Unknown">Unknown / Uncontacted</option>
+                    <option value="Strong Support (Panel)">🟢 Strong Support (Panel)</option>
+                    <option value="Leaning Support (Anil Kumar only)">🟡 Leaning Support (Anil Kumar only)</option>
+                    <option value="Undecided / Needs Follow-up">🟠 Undecided / Needs Follow-up</option>
+                    <option value="Opposed">🔴 Opposed</option>
+                  </select>
+
+                  <select 
+                    className="filter-select"
+                    value={assignedToFilter}
+                    onChange={(e) => {
+                      setAssignedToFilter(e.target.value);
+                      setCurrentPage(1);
+                    }}
+                  >
+                    <option value="All">All Volunteers</option>
+                    <option value="Unassigned">Unassigned</option>
+                    {volunteers.map(v => (
+                      <option key={v} value={v}>{v}</option>
+                    ))}
+                  </select>
+
+                  <button className="btn" onClick={() => handleExportCSV(true)}>Export CSV</button>
+                </div>
+              </div>
+
+              {/* Table wrapper */}
+              <div className="table-wrapper">
+                <table className="contacts-table">
+                  <thead>
+                    <tr>
+                      <th style={{ width: '40px', textAlign: 'center' }}>
+                        <input 
+                          type="checkbox" 
+                          checked={paginatedContacts.length > 0 && paginatedContacts.every(c => selectedContactIds.includes(c.id))}
+                          onChange={toggleSelectAll}
+                        />
+                      </th>
+                      <th>S.No</th>
+                      <th>AccCode</th>
+                      <th>Voter Name</th>
+                      <th>Mobile (UAE)</th>
+                      <th>District</th>
+                      <th>Volunteer</th>
+                      <th>Sentiment</th>
+                      <th>SMS Status</th>
+                      <th>Sent Date</th>
+                      <th style={{ textAlign: 'right' }}>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {paginatedContacts.length > 0 ? (
+                      paginatedContacts.map((contact) => (
+                        <tr key={contact.id}>
+                          <td style={{ textAlign: 'center' }}>
+                            <input 
+                              type="checkbox" 
+                              checked={selectedContactIds.includes(contact.id)}
+                              onChange={() => toggleContactSelect(contact.id)}
+                            />
+                          </td>
+                          <td>{contact.s_no}</td>
+                          <td><span className="badge code">{contact.acc_code}</span></td>
+                          <td style={{ fontWeight: 600, color: 'var(--color-text-white)' }}>{contact.account_name}</td>
+                          <td>{contact.mobile_number ? `+${contact.mobile_number}` : <span style={{ color: '#ef4444', fontStyle: 'italic' }}>None</span>}</td>
+                          <td>{contact.district || '—'}</td>
+                          <td>
+                            {contact.assigned_to && contact.assigned_to !== 'Unassigned' ? (
+                              <span style={{ fontSize: 12, fontWeight: 500, color: '#38bdf8' }}>{contact.assigned_to}</span>
+                            ) : (
+                              <span style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>Unassigned</span>
+                            )}
+                          </td>
+                          <td>
+                            {contact.member_reaction && contact.member_reaction !== 'Unknown' ? (
+                              <span style={{ fontSize: 11, fontWeight: 600, color: SENTIMENT_META[Object.keys(SENTIMENT_META).find(k => SENTIMENT_META[k].label === contact.member_reaction)]?.color }}>
+                                {contact.member_reaction.split(' (')[0]}
+                              </span>
+                            ) : (
+                              <span style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>—</span>
+                            )}
+                          </td>
+                          <td>
+                            <span className={`status-badge ${(contact.sms_status || 'Pending').toLowerCase()}`}>
+                              {contact.sms_status || 'Pending'}
+                            </span>
+                          </td>
+                          <td style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>{contact.sms_sent_date || '—'}</td>
+                          <td style={{ textAlign: 'right' }}>
+                            <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+                              <button 
+                                className="btn primary" 
+                                onClick={() => handleSendSingleSms(contact)}
+                                disabled={isSendingSms || !contact.mobile_number}
+                                style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '4px 10px', fontSize: 12 }}
+                                title="Send SMS directly via connected Android phone"
+                              >
+                                <Smartphone size={12} /> Send SMS
+                              </button>
+                              <button 
+                                className="action-btn"
+                                onClick={() => handleOpenDrawer(contact)}
+                                title="Edit Details"
+                              >
+                                <Edit2 size={14} />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))
+                    ) : (
+                      <tr>
+                        <td colSpan="11" style={{ textAlign: 'center', padding: 32, color: 'var(--color-text-muted)' }}>No contacts found matching selection.</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+                <div className="pagination">
+                  <span>Showing {totalItems > 0 ? startIndex + 1 : 0} to {Math.min(startIndex + itemsPerPage, totalItems)} of {totalItems} contacts</span>
+                  <div className="pagination-buttons">
+                    <button className="btn" onClick={() => handlePageChange(currentPage - 1)} disabled={currentPage === 1}><ChevronLeft size={16} /></button>
+                    <span style={{ display: 'flex', alignItems: 'center', padding: '0 8px', color: 'var(--color-text-primary)' }}>Page {currentPage} of {totalPages || 1}</span>
+                    <button className="btn" onClick={() => handlePageChange(currentPage + 1)} disabled={currentPage === totalPages || totalPages === 0}><ChevronRight size={16} /></button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* ==================== DATA INTEGRITY TAB ==================== */}
           {activeTab === 'quality' && (
             <div>
@@ -2372,6 +2931,7 @@ export default function App() {
                       <th>Email Status</th>
                       <th>Call Status</th>
                       <th>WhatsApp</th>
+                      <th>SMS</th>
                       <th style={{ textAlign: 'right' }}>Actions</th>
                     </tr>
                   </thead>
@@ -2410,6 +2970,7 @@ export default function App() {
                           <td><span className={`status-badge ${contact.email_status.toLowerCase()}`}>{contact.email_status}</span></td>
                           <td><span className={`status-badge ${contact.call_status.toLowerCase().replace(' ', '-')}`}>{contact.call_status}</span></td>
                           <td><span className={`status-badge ${contact.whatsapp_status.toLowerCase()}`}>{contact.whatsapp_status}</span></td>
+                          <td><span className={`status-badge ${(contact.sms_status || 'Pending').toLowerCase()}`}>{contact.sms_status || 'Pending'}</span></td>
                           <td style={{ textAlign: 'right' }}>
                             <button 
                               className="action-btn" 
@@ -2423,7 +2984,7 @@ export default function App() {
                       ))
                     ) : (
                       <tr>
-                        <td colSpan="12" style={{ textAlign: 'center', padding: 32, color: 'var(--color-text-muted)' }}>No contacts found matching selection.</td>
+                        <td colSpan="13" style={{ textAlign: 'center', padding: 32, color: 'var(--color-text-muted)' }}>No contacts found matching selection.</td>
                       </tr>
                     )}
                   </tbody>
@@ -2511,6 +3072,32 @@ export default function App() {
                   <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
                     <button className="btn primary" onClick={() => alert('Call script template updated locally!')}>
                       <Save size={14} /> Update Script
+                    </button>
+                  </div>
+                </div>
+
+                {/* SMS Textbee template card */}
+                <div className="template-card">
+                  <h3 className="panel-title" style={{ color: '#ec4899' }}>
+                    <Smartphone size={18} /> SMS Template (Textbee Android Gateway)
+                  </h3>
+                  <div className="template-variables">
+                    <span className="var-tag">&#123;Name&#125;</span>
+                    <span className="var-tag">&#123;AccCode&#125;</span>
+                    <span className="var-tag">&#123;SerialNo&#125;</span>
+                  </div>
+                  <textarea 
+                    className="drawer-textarea" 
+                    value={templates.sms} 
+                    onChange={(e) => setTemplates(p => ({ ...p, sms: e.target.value }))}
+                    style={{ height: 180 }}
+                  />
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>
+                      {templates.sms.length} chars (~{Math.ceil(templates.sms.length / 160) || 1} SMS)
+                    </span>
+                    <button className="btn primary" onClick={() => alert('SMS template updated locally!')}>
+                      <Save size={14} /> Update Template
                     </button>
                   </div>
                 </div>
@@ -3046,6 +3633,23 @@ export default function App() {
                     <option value="Failed">Failed</option>
                   </select>
                 </div>
+
+                <div className="drawer-field" style={{ gridColumn: 'span 2' }}>
+                  <span className="drawer-label">SMS Campaign (Textbee)</span>
+                  <select 
+                    className="drawer-input"
+                    value={selectedContact.sms_status || 'Pending'}
+                    onChange={(e) => setSelectedContact(prev => ({ 
+                      ...prev, 
+                      sms_status: e.target.value,
+                      sms_sent_date: e.target.value === 'Sent' ? getTodayString() : '' 
+                    }))}
+                  >
+                    <option value="Pending">Pending</option>
+                    <option value="Sent">Sent</option>
+                    <option value="Failed">Failed</option>
+                  </select>
+                </div>
               </div>
             </div>
 
@@ -3429,6 +4033,164 @@ export default function App() {
                 </button>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ==================== SMS INBOX / REPLIES MODAL ==================== */}
+      {showSmsInboxModal && (
+        <div className="modal-backdrop" onClick={() => setShowSmsInboxModal(false)}>
+          <div className="modal" style={{ maxWidth: 680, width: '90%' }} onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <Inbox size={20} color="#3b82f6" />
+                <h3 className="drawer-title" style={{ margin: 0 }}>Voter SMS Inbox & Replies</h3>
+                <span style={{ fontSize: 12, background: 'rgba(59, 130, 246, 0.15)', color: '#60a5fa', padding: '2px 8px', borderRadius: 12, fontWeight: 600 }}>
+                  {incomingSmsList.length} Messages
+                </span>
+              </div>
+              <button type="button" className="close-btn" onClick={() => setShowSmsInboxModal(false)}>×</button>
+            </div>
+
+            <div style={{ padding: '0 20px 20px 20px', display: 'flex', flexDirection: 'column', gap: 16 }}>
+              {/* Webhook Configuration Guide Banner */}
+              <div style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border-color)', borderRadius: 8, padding: '12px 16px', fontSize: 12 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                  <strong style={{ color: 'var(--color-text-white)' }}>Textbee Webhook Endpoint:</strong>
+                  <span style={{ color: textbeeConfig.hasWebhookSecret ? '#10b981' : '#f59e0b', fontWeight: 600 }}>
+                    {textbeeConfig.hasWebhookSecret ? '✓ HMAC Signature Verified' : '⚠ Secret Not Set in .env'}
+                  </span>
+                </div>
+                <div style={{ fontFamily: 'monospace', background: 'rgba(0,0,0,0.2)', padding: '6px 10px', borderRadius: 4, color: '#38bdf8', wordBreak: 'break-all' }}>
+                  POST {window.location.origin}/api/sms/webhook
+                </div>
+                <div style={{ color: 'var(--color-text-muted)', marginTop: 6, fontSize: 11 }}>
+                  Set this URL in your Textbee Dashboard Webhooks with event <code>MESSAGE_RECEIVED</code>. Replies automatically sync into voter notes.
+                </div>
+              </div>
+
+              {/* Action Bar */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontSize: 13, color: 'var(--color-text-secondary)' }}>Recent Incoming Messages:</span>
+                <button 
+                  className="btn" 
+                  onClick={fetchIncomingSms}
+                  style={{ fontSize: 12, padding: '4px 10px', display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                >
+                  <RefreshCw size={12} /> Refresh
+                </button>
+              </div>
+
+              {/* Messages List */}
+              <div style={{ maxHeight: 380, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {incomingSmsList.length > 0 ? (
+                  incomingSmsList.map((msg) => {
+                    const matchedContact = msg.contact_id ? contacts.find(c => c.id === msg.contact_id) : null;
+                    return (
+                      <div 
+                        key={msg.id} 
+                        style={{
+                          background: 'rgba(255,255,255,0.02)',
+                          border: '1px solid var(--border-color)',
+                          borderRadius: 8,
+                          padding: '12px 16px'
+                        }}
+                      >
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <strong style={{ fontSize: 14, color: 'var(--color-text-white)' }}>
+                              {msg.contact_name && msg.contact_name !== 'Unknown' ? msg.contact_name : msg.sender}
+                            </strong>
+                            {msg.sender && (
+                              <span style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>
+                                ({msg.sender})
+                              </span>
+                            )}
+                            {matchedContact && (
+                              <button 
+                                className="action-btn"
+                                style={{ padding: '2px 6px', fontSize: 11, height: 'auto' }}
+                                title="Open Contact Details"
+                                onClick={() => { setShowSmsInboxModal(false); handleOpenDrawer(matchedContact); }}
+                              >
+                                View Contact
+                              </button>
+                            )}
+                          </div>
+                          <span style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>
+                            {msg.received_at ? new Date(msg.received_at).toLocaleString() : (msg.created_at || '')}
+                          </span>
+                        </div>
+                        <div style={{ fontSize: 13, color: 'var(--color-text-primary)', whiteSpace: 'pre-wrap', background: 'rgba(0,0,0,0.1)', padding: '8px 12px', borderRadius: 6 }}>
+                          {msg.message}
+                        </div>
+                      </div>
+                    );
+                  })
+                ) : (
+                  <div style={{ padding: 40, textAlign: 'center', color: 'var(--color-text-muted)', fontSize: 13 }}>
+                    No incoming SMS messages received yet. When voters reply to your SMS broadcast, their messages will appear here.
+                  </div>
+                )}
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', borderTop: '1px solid var(--border-color)', paddingTop: 12 }}>
+                <button className="btn" onClick={() => setShowSmsInboxModal(false)}>
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Floating SMS Broadcast Progress Toast */}
+      {smsBroadcastProgress?.active && (
+        <div style={{
+          position: 'fixed',
+          bottom: 24,
+          right: 24,
+          zIndex: 9999,
+          background: 'var(--color-surface)',
+          border: '1px solid var(--border-color)',
+          borderRadius: 12,
+          padding: '16px 20px',
+          boxShadow: '0 10px 30px rgba(0,0,0,0.3)',
+          minWidth: 320,
+          maxWidth: 400
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <Smartphone size={18} color="#f59e0b" />
+              <strong style={{ fontSize: 14, color: 'var(--color-text-white)' }}>Android SMS Broadcast</strong>
+            </div>
+            <span style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
+              {smsBroadcastProgress.current} / {smsBroadcastProgress.total}
+            </span>
+          </div>
+          
+          <div className="target-progress-bar-container" style={{ height: 6, margin: '8px 0', background: 'rgba(255,255,255,0.1)' }}>
+            <div 
+              className="target-progress-bar" 
+              style={{ 
+                width: `${smsBroadcastProgress.total > 0 ? (smsBroadcastProgress.current / smsBroadcastProgress.total) * 100 : 0}%`,
+                background: 'linear-gradient(90deg, #f59e0b, #10b981)',
+                transition: 'width 0.3s ease'
+              }}
+            />
+          </div>
+
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: 'var(--color-text-muted)' }}>
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '65%' }}>
+              {smsBroadcastProgress.currentName ? `Sending: ${smsBroadcastProgress.currentName}` : 'Preparing...'}
+            </span>
+            <span>
+              <span style={{ color: '#10b981', fontWeight: 600 }}>✓ {smsBroadcastProgress.success}</span>
+              {smsBroadcastProgress.failed > 0 && <span style={{ color: '#ef4444', marginLeft: 8, fontWeight: 600 }}>✗ {smsBroadcastProgress.failed}</span>}
+            </span>
+          </div>
+          <div style={{ fontSize: 11, color: 'var(--color-text-muted)', marginTop: 6, fontStyle: 'italic' }}>
+            Carrier pacing active (2s delay per SMS)
           </div>
         </div>
       )}

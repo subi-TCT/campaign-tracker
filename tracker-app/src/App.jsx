@@ -1,10 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   Users, Mail, Phone, MessageSquare, AlertTriangle, Search, 
   ChevronLeft, ChevronRight, CheckCircle, Clock, Edit2, 
   Plus, FileText, Settings, HelpCircle, Save, ExternalLink,
   Sun, Moon, Upload, AlertCircle, X, Vote, Award, BarChart2, Menu,
-  Smartphone, Send, Inbox, RefreshCw, Database, Download, MapPin
+  Smartphone, Send, Inbox, RefreshCw, Database, Download, MapPin, Copy,
+  Image as ImageIcon
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 
@@ -36,6 +37,17 @@ const CAMPAIGN_CANDIDATES = [
   { sno: 18, name: "ROY MATHEW", post: "Managing Committee Member", initials: "RM", photo: "/candidates/ROY MATHEW_L2937.png" },
   { sno: 20, name: "SHANTY THOMAS CHERUVATHOOR", post: "Managing Committee Member", initials: "ST", photo: "/candidates/SHANTY THOMAS CHERUVATHOOR_L3206.png" }
 ];
+
+// Campaign Emojis for quick insertion
+const CAMPAIGN_EMOJIS = ['🟢', '🗳️', '🙏', '🤝', '👤', '✨', '📢', '✅', '⭐', '🇮🇳', '⚖️', '🟡', '🔴', '📱', '✌️', '🎉'];
+
+// Default message templates with preserved Unicode emojis
+const DEFAULT_TEMPLATES = {
+  whatsapp: "Dear {Name},\n\nKindly support 🟢 *Anil Kumar K G Pillai* (Managing Committee Candidate - Serial No. 3) & our 7-candidate panel 🗳️ for the Managing Committee Selection on Sep 6th, 2026 (8 AM onwards). Your valuable vote is critical for our success. 🙏\n\nThank you,\nCampaign Team",
+  email: "Dear {Name},\n\nWe hope this email finds you well.\n\nWe kindly request your valuable vote and support for Anil Kumar K G Pillai (Managing Committee Candidate, Serial No. 3) and our 7-candidate panel in the upcoming Managing Committee Selection on Sunday, September 6, 2026.\n\nYour support will ensure strong leadership and progress.\n\nBest regards,\nCampaign Committee",
+  callScript: "Hello {Name}, calling from the election committee. We request your support for Managing Committee candidate Anil Kumar K G Pillai (Serial No. 3) and our 7-candidate panel in the selection on September 6th at 8:00 AM. May we count on your support?",
+  sms: "Dear {Name}, please support Anil Kumar K G Pillai (Serial No. 3) & our 7-candidate panel for Managing Committee Selection on Sep 6th. Your vote is vital. Thank you!"
+};
 
 export default function App() {
   const [contacts, setContacts] = useState([]);
@@ -128,13 +140,86 @@ export default function App() {
     Number(localStorage.getItem('exit_poll_target')) || 1000
   );
 
-  // Templates state (initialized with campaign defaults)
-  const [templates, setTemplates] = useState({
-    whatsapp: "Dear {Name},\n\nKindly support Anil Kumar K G Pillai (Managing Committee Candidate - Serial No. 3) & our 7-candidate panel for the Managing Committee Selection on Sep 6th, 2026 (8 AM onwards). Your valuable vote is critical for our success.\n\nThank you,\nCampaign Team",
-    email: "Dear {Name},\n\nWe hope this email finds you well.\n\nWe kindly request your valuable vote and support for Anil Kumar K G Pillai (Managing Committee Candidate, Serial No. 3) and our 7-candidate panel in the upcoming Managing Committee Selection on Sunday, September 6, 2026.\n\nYour support will ensure strong leadership and progress.\n\nBest regards,\nCampaign Committee",
-    callScript: "Hello {Name}, calling from the election committee. We request your support for Managing Committee candidate Anil Kumar K G Pillai (Serial No. 3) and our 7-candidate panel in the selection on September 6th at 8:00 AM. May we count on your support?",
-    sms: "Dear {Name}, please support Anil Kumar K G Pillai (Serial No. 3) & our 7-candidate panel for Managing Committee Selection on Sep 6th. Your vote is vital. Thank you!"
+  // Templates state (persisted to localStorage with Unicode emoji support)
+  const [templates, setTemplates] = useState(() => {
+    try {
+      const saved = localStorage.getItem('campaign_templates');
+      if (saved) {
+        return { ...DEFAULT_TEMPLATES, ...JSON.parse(saved) };
+      }
+    } catch (e) {
+      console.warn('Error reading saved templates:', e);
+    }
+    return DEFAULT_TEMPLATES;
   });
+
+  // Persist templates to localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem('campaign_templates', JSON.stringify(templates));
+    } catch (e) {
+      console.warn('Error saving templates:', e);
+    }
+  }, [templates]);
+
+  // WhatsApp helper states
+  const [copiedContactId, setCopiedContactId] = useState(null);
+  const [waSendMode, setWaSendMode] = useState(() => localStorage.getItem('wa_send_mode') || 'web');
+  const [isWaComposerOpen, setIsWaComposerOpen] = useState(false);
+
+  // Template Photo state for campaign posters/candidate photos
+  const [templatePhoto, setTemplatePhoto] = useState(() => {
+    try {
+      return localStorage.getItem('campaign_template_photo') || '/candidates/anil.jpg';
+    } catch (e) {
+      return '/candidates/anil.jpg';
+    }
+  });
+  const [customFlyerName, setCustomFlyerName] = useState(() => {
+    try {
+      return localStorage.getItem('campaign_custom_flyer_name') || '';
+    } catch (e) {
+      return '';
+    }
+  });
+  const [customFlyerData, setCustomFlyerData] = useState(() => {
+    try {
+      const saved = localStorage.getItem('campaign_custom_flyer_data');
+      if (saved) return saved;
+      const photo = localStorage.getItem('campaign_template_photo');
+      if (photo && photo.startsWith('data:')) return photo;
+      return '';
+    } catch (e) {
+      return '';
+    }
+  });
+  const [isPhotoEnabled, setIsPhotoEnabled] = useState(() => {
+    try {
+      return localStorage.getItem('campaign_photo_enabled') !== 'false';
+    } catch (e) {
+      return true;
+    }
+  });
+  const [showBulkPhotoGuide, setShowBulkPhotoGuide] = useState(false);
+  const waFlyerInputRef = useRef(null);
+  const tplFlyerInputRef = useRef(null);
+
+  useEffect(() => {
+    localStorage.setItem('wa_send_mode', waSendMode);
+  }, [waSendMode]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('campaign_template_photo', templatePhoto);
+      localStorage.setItem('campaign_custom_flyer_name', customFlyerName);
+      if (customFlyerData) {
+        localStorage.setItem('campaign_custom_flyer_data', customFlyerData);
+      }
+      localStorage.setItem('campaign_photo_enabled', String(isPhotoEnabled));
+    } catch (e) {
+      console.warn('Error saving template photo settings:', e);
+    }
+  }, [templatePhoto, customFlyerName, customFlyerData, isPhotoEnabled]);
 
   // Panel Candidates (prefilled with our 7-candidate Managing Committee panel)
   const [panelCandidates, setPanelCandidates] = useState([
@@ -1275,21 +1360,205 @@ export default function App() {
   // Format message text by replacing tags
   const formatTemplateMessage = (templateText, contact) => {
     if (!contact) return '';
-    return templateText
-      .replace(/{Name}/g, contact.account_name)
-      .replace(/{AccCode}/g, contact.acc_code)
-      .replace(/{SerialNo}/g, contact.s_no);
+    return (templateText || '')
+      .replace(/{Name}/g, contact.account_name || '')
+      .replace(/{AccCode}/g, contact.acc_code || '')
+      .replace(/{SerialNo}/g, contact.s_no || '');
   };
 
-  // WhatsApp click handler
+  // Copy formatted message (preserving all emojis and newlines) to clipboard
+  const copyMessageToClipboard = (contact) => {
+    if (!contact) return false;
+    const rawMsg = formatTemplateMessage(templates.whatsapp, contact);
+    try {
+      if (navigator?.clipboard?.writeText) {
+        navigator.clipboard.writeText(rawMsg);
+      } else {
+        const ta = document.createElement('textarea');
+        ta.value = rawMsg;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+      }
+      setCopiedContactId(contact.id);
+      setTimeout(() => setCopiedContactId(null), 2500);
+      return true;
+    } catch (err) {
+      console.warn('Clipboard copy error:', err);
+      return false;
+    }
+  };
+
+  // Compress and resize image client-side to ensure high quality while fitting safely in localStorage (<200KB)
+  const compressImage = (file, maxWidth = 1200, maxHeight = 1200, quality = 0.85) => {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      const objectUrl = URL.createObjectURL(file);
+      img.onload = () => {
+        URL.revokeObjectURL(objectUrl);
+        let width = img.naturalWidth || img.width;
+        let height = img.naturalHeight || img.height;
+
+        if (width > height) {
+          if (width > maxWidth) {
+            height = Math.round((height * maxWidth) / width);
+            width = maxWidth;
+          }
+        } else {
+          if (height > maxHeight) {
+            width = Math.round((width * maxHeight) / height);
+            height = maxHeight;
+          }
+        }
+
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        // Fill white background for transparent PNGs so they don't get black backgrounds in JPEG
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, width, height);
+        ctx.drawImage(img, 0, 0, width, height);
+        const dataUrl = canvas.toDataURL('image/jpeg', quality);
+        resolve(dataUrl);
+      };
+      img.onerror = (err) => {
+        URL.revokeObjectURL(objectUrl);
+        reject(err);
+      };
+      img.src = objectUrl;
+    });
+  };
+
+  // Copy candidate / campaign photo to system clipboard (as PNG image)
+  const copyPhotoToClipboard = async (photoUrl = templatePhoto, showAlert = true) => {
+    if (!photoUrl) {
+      if (showAlert) alert('No campaign photo selected.');
+      return false;
+    }
+    try {
+      const img = new Image();
+      if (!photoUrl.startsWith('data:')) {
+        img.crossOrigin = 'anonymous';
+      }
+      await new Promise((resolve, reject) => {
+        img.onload = resolve;
+        img.onerror = () => reject(new Error('Image failed to load'));
+        img.src = photoUrl;
+      });
+
+      const canvas = document.createElement('canvas');
+      canvas.width = img.naturalWidth || img.width;
+      canvas.height = img.naturalHeight || img.height;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0);
+
+      const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+      if (!blob) throw new Error('Could not convert image to PNG blob');
+
+      await navigator.clipboard.write([
+        new ClipboardItem({ 'image/png': blob })
+      ]);
+
+      if (showAlert) {
+        alert('📷 Campaign Poster copied to clipboard! In WhatsApp, simply press Ctrl+V to attach it.');
+      }
+      return true;
+    } catch (err) {
+      console.warn('Clipboard image write failed:', err);
+      if (showAlert) {
+        downloadCampaignPhoto(photoUrl);
+        alert('Poster downloaded! You can attach it directly in WhatsApp Web or Bulk WhatsApp Sender.');
+      }
+      return false;
+    }
+  };
+
+  // Download campaign photo directly to disk
+  const downloadCampaignPhoto = (photoUrl = templatePhoto) => {
+    if (!photoUrl) return;
+    const link = document.createElement('a');
+    link.href = photoUrl;
+    const cleanFileName = customFlyerName ? customFlyerName.replace(/\.[^/.]+$/, "") + "_Poster.jpg" : 'AnilKumar_Campaign_Poster.jpg';
+    link.download = cleanFileName;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  // Upload custom campaign flyer/poster
+  const handlePhotoUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      alert('Please select an image file (JPG, PNG, WebP).');
+      return;
+    }
+    const fileName = file.name;
+    // Clear the input value so user can re-upload the same file if desired
+    e.target.value = '';
+
+    try {
+      const compressedBase64 = await compressImage(file, 1200, 1200, 0.85);
+      setTemplatePhoto(compressedBase64);
+      setCustomFlyerData(compressedBase64);
+      setCustomFlyerName(fileName);
+      setIsPhotoEnabled(true);
+      try {
+        localStorage.setItem('campaign_template_photo', compressedBase64);
+        localStorage.setItem('campaign_custom_flyer_data', compressedBase64);
+        localStorage.setItem('campaign_custom_flyer_name', fileName);
+        localStorage.setItem('campaign_photo_enabled', 'true');
+      } catch (storageErr) {
+        console.warn('Could not store flyer in localStorage:', storageErr);
+      }
+    } catch (err) {
+      console.warn('Image compression failed, using direct reader fallback:', err);
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const base64 = event.target.result;
+        setTemplatePhoto(base64);
+        setCustomFlyerData(base64);
+        setCustomFlyerName(fileName);
+        setIsPhotoEnabled(true);
+        try {
+          localStorage.setItem('campaign_template_photo', base64);
+          localStorage.setItem('campaign_custom_flyer_data', base64);
+          localStorage.setItem('campaign_custom_flyer_name', fileName);
+          localStorage.setItem('campaign_photo_enabled', 'true');
+        } catch (storageErr) {
+          console.warn('Could not store flyer in localStorage:', storageErr);
+        }
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  // WhatsApp click handler with direct URL & automatic clipboard copy
   const handleWhatsAppClick = (contact) => {
     const rawMsg = formatTemplateMessage(templates.whatsapp, contact);
+    
+    // Clean and format mobile number
+    const cleanMobile = normalizePhoneNumber(contact.mobile_number) || (contact.mobile_number || '').replace(/\D/g, '');
     const encoded = encodeURIComponent(rawMsg);
-    const cleanMobile = contact.mobile_number.replace(/\D/g, '');
-    const url = `https://wa.me/${cleanMobile}?text=${encoded}`;
+    
+    // Select direct endpoint (bypasses wa.me HTTP 302 redirect which corrupts multi-byte emojis into '?')
+    const url = waSendMode === 'web'
+      ? `https://web.whatsapp.com/send?phone=${cleanMobile}&text=${encoded}`
+      : `https://api.whatsapp.com/send?phone=${cleanMobile}&text=${encoded}`;
     
     window.open(url, '_blank');
     setWaConfirmContact(contact);
+
+    // If campaign poster is enabled, copy the poster image to clipboard so pressing Ctrl+V in WhatsApp Web attaches the image!
+    if (isPhotoEnabled && templatePhoto) {
+      copyPhotoToClipboard(templatePhoto, false);
+    } else {
+      copyMessageToClipboard(contact);
+    }
   };
 
   const confirmWhatsAppStatus = async (status, sentiment = null) => {
@@ -1306,7 +1575,7 @@ export default function App() {
     setWaConfirmContact(null);
   };
 
-  // Export CSV helper
+  // Export CSV helper with UTF-8 BOM so Excel & Windows software never corrupt emojis into '?'
   const handleExportCSV = (exportFiltered = false) => {
     const listToExport = exportFiltered ? filteredContacts : contacts;
     if (listToExport.length === 0) return;
@@ -1330,12 +1599,13 @@ export default function App() {
       c.exit_poll_status || 'Pending'
     ]);
     
-    const csvContent = "data:text/csv;charset=utf-8," 
-      + [headers.join(','), ...rows.map(r => r.map(val => `"${String(val).replace(/"/g, '""')}"`).join(','))].join('\n');
-      
-    const encodedUri = encodeURI(csvContent);
+    const csvContent = [headers.join(','), ...rows.map(r => r.map(val => `"${String(val ?? '').replace(/"/g, '""')}"`).join(','))].join('\r\n');
+    
+    // UTF-8 Byte Order Mark (\uFEFF) forces Windows and Excel to read file as UTF-8 instead of ANSI/Windows-1252
+    const blob = new Blob(["\uFEFF" + csvContent], { type: 'text/csv;charset=utf-8;' });
+    const blobUrl = URL.createObjectURL(blob);
     const link = document.createElement("a");
-    link.setAttribute("href", encodedUri);
+    link.setAttribute("href", blobUrl);
     
     let filename = "campaign_outreach_report.csv";
     if (exportFiltered) {
@@ -1358,6 +1628,76 @@ export default function App() {
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    URL.revokeObjectURL(blobUrl);
+  };
+
+  // Export specifically formatted for Bulk WhatsApp Software with 100% preserved emojis
+  const handleExportWhatsAppBulkSender = (format = 'xlsx') => {
+    const listToExport = filteredContacts.length > 0 ? filteredContacts : contacts;
+    if (listToExport.length === 0) {
+      alert('No contacts available to export.');
+      return;
+    }
+
+    const dataRows = listToExport.map(c => {
+      const cleanPhone = normalizePhoneNumber(c.mobile_number) || (c.mobile_number || '').replace(/\D/g, '');
+      const personalizedMsg = formatTemplateMessage(templates.whatsapp, c);
+      return {
+        'Mobile Number': cleanPhone,
+        'Raw Phone': c.mobile_number || '',
+        'Name': c.account_name || '',
+        'AccCode': c.acc_code || '',
+        'SerialNo': c.s_no || '',
+        'Message': personalizedMsg,
+        'WhatsApp Status': c.whatsapp_status || 'Pending',
+        'Voter Sentiment': c.member_reaction || 'Unknown'
+      };
+    });
+
+    const fileSuffix = whatsappFilter !== 'All' ? `_${whatsappFilter.toLowerCase()}` : '';
+    const dateStr = getTodayString();
+
+    if (format === 'xlsx') {
+      const worksheet = XLSX.utils.json_to_sheet(dataRows);
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, 'Bulk WhatsApp');
+      worksheet['!cols'] = [
+        { wch: 18 }, // Mobile Number
+        { wch: 18 }, // Raw Phone
+        { wch: 28 }, // Name
+        { wch: 12 }, // AccCode
+        { wch: 10 }, // SerialNo
+        { wch: 60 }, // Message
+        { wch: 16 }, // Status
+        { wch: 24 }  // Sentiment
+      ];
+      XLSX.writeFile(workbook, `bulk_whatsapp_send_list${fileSuffix}_${dateStr}.xlsx`);
+    } else {
+      const headers = ['Mobile Number', 'Raw Phone', 'Name', 'AccCode', 'SerialNo', 'Message', 'WhatsApp Status', 'Voter Sentiment'];
+      const csvLines = [
+        headers.join(','),
+        ...dataRows.map(r => [
+          `"${String(r['Mobile Number']).replace(/"/g, '""')}"`,
+          `"${String(r['Raw Phone']).replace(/"/g, '""')}"`,
+          `"${String(r['Name']).replace(/"/g, '""')}"`,
+          `"${String(r['AccCode']).replace(/"/g, '""')}"`,
+          `"${String(r['SerialNo']).replace(/"/g, '""')}"`,
+          `"${String(r['Message']).replace(/"/g, '""')}"`,
+          `"${String(r['WhatsApp Status']).replace(/"/g, '""')}"`,
+          `"${String(r['Voter Sentiment']).replace(/"/g, '""')}"`
+        ].join(','))
+      ].join('\r\n');
+
+      const blob = new Blob(["\uFEFF" + csvLines], { type: 'text/csv;charset=utf-8;' });
+      const blobUrl = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.setAttribute("href", blobUrl);
+      link.setAttribute("download", `bulk_whatsapp_send_list${fileSuffix}_${dateStr}.csv`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(blobUrl);
+    }
   };
 
   // Open Edit Drawer
@@ -2752,6 +3092,46 @@ export default function App() {
                   >
                     <Upload size={16} /> Import Sent Numbers
                   </button>
+                  <button 
+                    className="btn"
+                    onClick={() => handleExportWhatsAppBulkSender('xlsx')}
+                    title="Export ready-to-use Excel file (.xlsx) with 100% preserved emojis for Bulk WhatsApp apps"
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: 8, background: 'rgba(16, 185, 129, 0.15)', borderColor: '#10b981', color: '#10b981', fontWeight: 600 }}
+                  >
+                    <Download size={16} /> Export for Bulk App (.xlsx)
+                  </button>
+                  <button 
+                    className="btn"
+                    onClick={() => handleExportWhatsAppBulkSender('csv')}
+                    title="Export ready-to-use CSV with UTF-8 BOM for Bulk WhatsApp apps"
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13 }}
+                  >
+                    <FileText size={15} /> Export Bulk (.csv)
+                  </button>
+                  <button 
+                    className="btn"
+                    onClick={() => downloadCampaignPhoto()}
+                    title="Download campaign poster image to attach in Bulk WhatsApp Sender or chat"
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13 }}
+                  >
+                    <ImageIcon size={15} color="#10b981" /> Download Poster
+                  </button>
+                  <button 
+                    className="btn"
+                    onClick={() => setShowBulkPhotoGuide(true)}
+                    title="Instructions on how to send poster via Bulk WhatsApp App or WhatsApp Web"
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13, background: 'rgba(59, 130, 246, 0.12)', borderColor: '#3b82f6', color: '#60a5fa', fontWeight: 600 }}
+                  >
+                    <HelpCircle size={15} color="#60a5fa" /> How to Send Poster?
+                  </button>
+                  <button
+                    className="btn"
+                    onClick={() => setIsWaComposerOpen(p => !p)}
+                    title="Customize WhatsApp message template, photo, and emojis"
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: 6, borderColor: isWaComposerOpen ? '#10b981' : undefined, color: isWaComposerOpen ? '#10b981' : undefined, fontWeight: 600 }}
+                  >
+                    <Edit2 size={15} /> {isWaComposerOpen ? 'Hide Template' : 'Edit Template & Photo'}
+                  </button>
                   {selectedContactIds.length > 0 && (
                     <span style={{ fontSize: '14px', color: 'var(--color-text-secondary)' }}>
                       {selectedContactIds.length} selected
@@ -2873,6 +3253,15 @@ export default function App() {
                       <option key={name} value={name}>{name}</option>
                     ))}
                   </select>
+                  <select 
+                    className="filter-select"
+                    value={waSendMode}
+                    onChange={(e) => setWaSendMode(e.target.value)}
+                    title="Choose Click-to-Chat target"
+                  >
+                    <option value="web">Mode: Direct WhatsApp Web</option>
+                    <option value="api">Mode: WhatsApp API / Mobile App</option>
+                  </select>
                   <button 
                     className="btn success" 
                     onClick={() => handleExportCSV(true)}
@@ -2883,6 +3272,222 @@ export default function App() {
                   </button>
                 </div>
               </div>
+
+              {/* Inline WhatsApp Message Composer & Emoji Bar */}
+              {isWaComposerOpen && (
+                <div className="glass-panel" style={{ padding: '16px 20px', marginBottom: 20, border: '1px solid rgba(16, 185, 129, 0.35)', background: 'rgba(16, 185, 129, 0.04)' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10, flexWrap: 'wrap', gap: 8 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <MessageSquare size={18} color="#10b981" />
+                      <span style={{ fontWeight: 600, fontSize: 14, color: 'var(--color-text-white)' }}>
+                        WhatsApp Message Template (UTF-8 Emojis Preserved)
+                      </span>
+                    </div>
+                    <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+                      <span style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>Insert Tag:</span>
+                      <button 
+                        type="button" 
+                        className="var-tag-btn"
+                        onClick={() => setTemplates(p => ({ ...p, whatsapp: p.whatsapp + ' {Name}' }))}
+                      >
+                        + &#123;Name&#125;
+                      </button>
+                      <button 
+                        type="button" 
+                        className="var-tag-btn"
+                        onClick={() => setTemplates(p => ({ ...p, whatsapp: p.whatsapp + ' {AccCode}' }))}
+                      >
+                        + &#123;AccCode&#125;
+                      </button>
+                      <button 
+                        type="button" 
+                        className="var-tag-btn"
+                        onClick={() => setTemplates(p => ({ ...p, whatsapp: p.whatsapp + ' {SerialNo}' }))}
+                      >
+                        + &#123;SerialNo&#125;
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Emoji Bar */}
+                  <div className="emoji-bar">
+                    <span style={{ fontSize: 11, color: 'var(--color-text-muted)', marginRight: 6 }}>Quick Emojis:</span>
+                    {CAMPAIGN_EMOJIS.map(emoji => (
+                      <button
+                        key={emoji}
+                        type="button"
+                        className="emoji-chip"
+                        title={`Insert ${emoji}`}
+                        onClick={() => setTemplates(p => ({ ...p, whatsapp: p.whatsapp + ' ' + emoji }))}
+                      >
+                        {emoji}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Campaign Photo / Poster Attachment Section */}
+                  <div style={{ padding: '12px 14px', background: 'rgba(255, 255, 255, 0.03)', borderRadius: 8, border: '1px solid var(--border-color)', marginBottom: 12 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, flexWrap: 'wrap', gap: 8 }}>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontWeight: 600, fontSize: 13, color: 'var(--color-text-white)' }}>
+                        <input 
+                          type="checkbox" 
+                          checked={isPhotoEnabled} 
+                          onChange={(e) => setIsPhotoEnabled(e.target.checked)} 
+                        />
+                        <ImageIcon size={16} color="#10b981" />
+                        <span>Campaign Poster / Candidate Photo</span>
+                      </label>
+                      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                        <button 
+                          type="button" 
+                          className="btn" 
+                          style={{ fontSize: 11, padding: '3px 8px' }}
+                          onClick={() => copyPhotoToClipboard()}
+                          title="Copy photo directly to clipboard so you can press Ctrl+V into WhatsApp"
+                        >
+                          <Copy size={12} /> Copy Photo (Ctrl+V)
+                        </button>
+                        <button 
+                          type="button" 
+                          className="btn" 
+                          style={{ fontSize: 11, padding: '3px 8px' }}
+                          onClick={() => downloadCampaignPhoto()}
+                          title="Download photo for Bulk WhatsApp App or WhatsApp Web"
+                        >
+                          <Download size={12} /> Download Poster
+                        </button>
+                      </div>
+                    </div>
+
+                    {isPhotoEnabled && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap', marginTop: 8 }}>
+                        <div style={{ position: 'relative', width: 60, height: 60, borderRadius: 8, overflow: 'hidden', border: '2px solid #10b981', flexShrink: 0, background: '#000' }}>
+                          <img 
+                            src={templatePhoto} 
+                            alt="Campaign Poster" 
+                            style={{ width: '100%', height: '100%', objectFit: 'cover' }} 
+                          />
+                          {(templatePhoto.startsWith('data:') || (customFlyerData && templatePhoto === customFlyerData)) && (
+                            <span style={{ position: 'absolute', bottom: 0, left: 0, right: 0, background: 'rgba(16,185,129,0.92)', color: '#fff', fontSize: 8, fontWeight: 700, textAlign: 'center', padding: '1px 0', letterSpacing: '0.5px' }}>
+                              CUSTOM
+                            </span>
+                          )}
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, flex: 1, minWidth: 220 }}>
+                          <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+                            <span style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>Choose Photo:</span>
+                            <button 
+                              type="button" 
+                              className="var-tag-btn" 
+                              style={{ borderColor: templatePhoto === '/candidates/anil.jpg' ? '#10b981' : undefined, color: templatePhoto === '/candidates/anil.jpg' ? '#10b981' : undefined }}
+                              onClick={() => setTemplatePhoto('/candidates/anil.jpg')}
+                            >
+                              Anil Kumar (Candidate #3)
+                            </button>
+                            <button 
+                              type="button" 
+                              className="var-tag-btn" 
+                              style={{ borderColor: templatePhoto === '/candidates/balakrishnan.jpg' ? '#10b981' : undefined, color: templatePhoto === '/candidates/balakrishnan.jpg' ? '#10b981' : undefined }}
+                              onClick={() => setTemplatePhoto('/candidates/balakrishnan.jpg')}
+                            >
+                              Balan (President)
+                            </button>
+                            <input 
+                              type="file" 
+                              ref={waFlyerInputRef} 
+                              accept="image/*" 
+                              style={{ display: 'none' }} 
+                              onChange={handlePhotoUpload} 
+                            />
+                            {customFlyerData ? (
+                              <button 
+                                type="button"
+                                className="var-tag-btn" 
+                                style={{ 
+                                  cursor: 'pointer', 
+                                  display: 'inline-flex', 
+                                  alignItems: 'center', 
+                                  gap: 4,
+                                  borderColor: (templatePhoto === customFlyerData || templatePhoto.startsWith('data:')) ? '#10b981' : undefined,
+                                  color: (templatePhoto === customFlyerData || templatePhoto.startsWith('data:')) ? '#10b981' : undefined,
+                                  background: (templatePhoto === customFlyerData || templatePhoto.startsWith('data:')) ? 'rgba(16,185,129,0.12)' : undefined,
+                                  fontWeight: (templatePhoto === customFlyerData || templatePhoto.startsWith('data:')) ? 600 : 400
+                                }}
+                                onClick={() => {
+                                  if (templatePhoto !== customFlyerData) {
+                                    setTemplatePhoto(customFlyerData);
+                                  } else {
+                                    waFlyerInputRef.current?.click();
+                                  }
+                                }}
+                                title="Click to select or click again to replace flyer"
+                              >
+                                <Upload size={11} /> {(templatePhoto === customFlyerData || templatePhoto.startsWith('data:')) ? (customFlyerName ? `✓ Custom: ${customFlyerName.length > 18 ? customFlyerName.slice(0, 15) + '...' : customFlyerName}` : '✓ Custom Flyer') : `Custom: ${customFlyerName ? (customFlyerName.length > 12 ? customFlyerName.slice(0, 9) + '...' : customFlyerName) : 'Flyer'}`}
+                              </button>
+                            ) : null}
+                            <button 
+                              type="button"
+                              className="var-tag-btn" 
+                              style={{ 
+                                cursor: 'pointer', 
+                                display: 'inline-flex', 
+                                alignItems: 'center', 
+                                gap: 4,
+                                borderColor: (!customFlyerData && templatePhoto.startsWith('data:')) ? '#10b981' : undefined,
+                                color: (!customFlyerData && templatePhoto.startsWith('data:')) ? '#10b981' : undefined
+                              }}
+                              onClick={() => waFlyerInputRef.current?.click()}
+                            >
+                              <Upload size={11} /> {customFlyerData ? 'Upload New Flyer' : 'Upload Custom Flyer'}
+                            </button>
+                          </div>
+                          <span style={{ fontSize: 11, color: 'var(--color-text-secondary)' }}>
+                            💡 <em>Click <strong>Copy Photo</strong> to copy the image, then in WhatsApp Web press <strong>Ctrl+V</strong> to attach it! In Bulk WhatsApp apps, attach this poster using the 'Attach Media' button.</em>
+                          </span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  <textarea 
+                    className="drawer-textarea"
+                    style={{ minHeight: 110, fontSize: 13, fontFamily: 'inherit', resize: 'vertical', width: '100%', marginBottom: 8 }}
+                    value={templates.whatsapp}
+                    onChange={(e) => setTemplates(p => ({ ...p, whatsapp: e.target.value }))}
+                    placeholder="Type your WhatsApp message template with emojis..."
+                  />
+
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8, fontSize: 12 }}>
+                    <span style={{ color: '#10b981', display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <CheckCircle size={14} /> Unicode emojis active • Click 'Send Message' or 'Copy' to copy directly to clipboard
+                    </span>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <button 
+                        type="button"
+                        className="btn"
+                        style={{ fontSize: 12, padding: '4px 10px' }}
+                        onClick={() => {
+                          navigator.clipboard.writeText(templates.whatsapp);
+                          alert('WhatsApp template copied to clipboard with all emojis!');
+                        }}
+                      >
+                        <Copy size={13} /> Copy Template
+                      </button>
+                      <button 
+                        type="button"
+                        className="btn primary"
+                        style={{ fontSize: 12, padding: '4px 12px' }}
+                        onClick={() => {
+                          localStorage.setItem('campaign_templates', JSON.stringify(templates));
+                          alert('WhatsApp template saved! Emojis and formatting are permanently stored.');
+                        }}
+                      >
+                        <Save size={13} /> Save Template
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* Table */}
               <div className="table-wrapper">
@@ -2924,14 +3529,24 @@ export default function App() {
                             </span>
                           </td>
                           <td style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>{contact.whatsapp_sent_date || '—'}</td>
-                          <td style={{ textAlign: 'right' }}>
-                            <button 
-                              className="btn primary" 
-                              onClick={() => handleWhatsAppClick(contact)}
-                              style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
-                            >
-                              <MessageSquare size={14} /> Send Message <ExternalLink size={12} />
-                            </button>
+                          <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                            <div style={{ display: 'inline-flex', gap: 6, alignItems: 'center', justifyContent: 'flex-end' }}>
+                              <button 
+                                className="btn" 
+                                onClick={() => copyMessageToClipboard(contact)}
+                                title="Copy personalized message with emojis to clipboard (Ctrl+V into WhatsApp)"
+                                style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '6px 10px', fontSize: 12 }}
+                              >
+                                <Copy size={13} /> {copiedContactId === contact.id ? 'Copied!' : 'Copy'}
+                              </button>
+                              <button 
+                                className="btn primary" 
+                                onClick={() => handleWhatsAppClick(contact)}
+                                style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                              >
+                                <MessageSquare size={14} /> Send Message <ExternalLink size={12} />
+                              </button>
+                            </div>
                           </td>
                         </tr>
                       ))
@@ -3630,96 +4245,320 @@ export default function App() {
               <div className="template-grid">
                 {/* WhatsApp template card */}
                 <div className="template-card">
-                  <h3 className="panel-title" style={{ color: '#10b981' }}>
-                    <MessageSquare size={18} /> WhatsApp Message Template
-                  </h3>
-                  <div className="template-variables">
-                    <span className="var-tag">&#123;Name&#125;</span>
-                    <span className="var-tag">&#123;AccCode&#125;</span>
-                    <span className="var-tag">&#123;SerialNo&#125;</span>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                    <h3 className="panel-title" style={{ color: '#10b981', margin: 0 }}>
+                      <MessageSquare size={18} /> WhatsApp Message Template
+                    </h3>
+                    <span style={{ fontSize: 11, color: '#10b981', fontWeight: 600 }}>UTF-8 Unicode Emojis</span>
                   </div>
+                  <div className="template-variables" style={{ marginBottom: 8 }}>
+                    <span style={{ fontSize: 12, color: 'var(--color-text-muted)', alignSelf: 'center' }}>Insert Tag:</span>
+                    <button type="button" className="var-tag-btn" onClick={() => setTemplates(p => ({ ...p, whatsapp: p.whatsapp + ' {Name}' }))}>+ &#123;Name&#125;</button>
+                    <button type="button" className="var-tag-btn" onClick={() => setTemplates(p => ({ ...p, whatsapp: p.whatsapp + ' {AccCode}' }))}>+ &#123;AccCode&#125;</button>
+                    <button type="button" className="var-tag-btn" onClick={() => setTemplates(p => ({ ...p, whatsapp: p.whatsapp + ' {SerialNo}' }))}>+ &#123;SerialNo&#125;</button>
+                  </div>
+                  {/* Emoji Quick-Bar */}
+                  <div className="emoji-bar">
+                    <span style={{ fontSize: 11, color: 'var(--color-text-muted)', marginRight: 4 }}>Quick Emojis:</span>
+                    {CAMPAIGN_EMOJIS.map(emoji => (
+                      <button
+                        key={emoji}
+                        type="button"
+                        className="emoji-chip"
+                        title={`Insert ${emoji}`}
+                        onClick={() => setTemplates(p => ({ ...p, whatsapp: p.whatsapp + ' ' + emoji }))}
+                      >
+                        {emoji}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Campaign Photo / Poster Attachment Section */}
+                  <div style={{ padding: '12px 14px', background: 'rgba(255, 255, 255, 0.03)', borderRadius: 8, border: '1px solid var(--border-color)', marginBottom: 12 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, flexWrap: 'wrap', gap: 8 }}>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontWeight: 600, fontSize: 13, color: 'var(--color-text-white)' }}>
+                        <input 
+                          type="checkbox" 
+                          checked={isPhotoEnabled} 
+                          onChange={(e) => setIsPhotoEnabled(e.target.checked)} 
+                        />
+                        <ImageIcon size={16} color="#10b981" />
+                        <span>Campaign Poster / Candidate Photo</span>
+                      </label>
+                      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                        <button 
+                          type="button" 
+                          className="btn" 
+                          style={{ fontSize: 11, padding: '3px 8px' }}
+                          onClick={() => copyPhotoToClipboard()}
+                          title="Copy photo directly to clipboard so you can press Ctrl+V into WhatsApp"
+                        >
+                          <Copy size={12} /> Copy Photo (Ctrl+V)
+                        </button>
+                        <button 
+                          type="button" 
+                          className="btn" 
+                          style={{ fontSize: 11, padding: '3px 8px' }}
+                          onClick={() => downloadCampaignPhoto()}
+                          title="Download photo for Bulk WhatsApp App or WhatsApp Web"
+                        >
+                          <Download size={12} /> Download Poster
+                        </button>
+                      </div>
+                    </div>
+
+                    {isPhotoEnabled && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap', marginTop: 8 }}>
+                        <div style={{ position: 'relative', width: 60, height: 60, borderRadius: 8, overflow: 'hidden', border: '2px solid #10b981', flexShrink: 0, background: '#000' }}>
+                          <img 
+                            src={templatePhoto} 
+                            alt="Campaign Poster" 
+                            style={{ width: '100%', height: '100%', objectFit: 'cover' }} 
+                          />
+                          {(templatePhoto.startsWith('data:') || (customFlyerData && templatePhoto === customFlyerData)) && (
+                            <span style={{ position: 'absolute', bottom: 0, left: 0, right: 0, background: 'rgba(16,185,129,0.92)', color: '#fff', fontSize: 8, fontWeight: 700, textAlign: 'center', padding: '1px 0', letterSpacing: '0.5px' }}>
+                              CUSTOM
+                            </span>
+                          )}
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, flex: 1, minWidth: 220 }}>
+                          <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+                            <span style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>Choose Photo:</span>
+                            <button 
+                              type="button" 
+                              className="var-tag-btn" 
+                              style={{ borderColor: templatePhoto === '/candidates/anil.jpg' ? '#10b981' : undefined, color: templatePhoto === '/candidates/anil.jpg' ? '#10b981' : undefined }}
+                              onClick={() => setTemplatePhoto('/candidates/anil.jpg')}
+                            >
+                              Anil Kumar (Candidate #3)
+                            </button>
+                            <button 
+                              type="button" 
+                              className="var-tag-btn" 
+                              style={{ borderColor: templatePhoto === '/candidates/balakrishnan.jpg' ? '#10b981' : undefined, color: templatePhoto === '/candidates/balakrishnan.jpg' ? '#10b981' : undefined }}
+                              onClick={() => setTemplatePhoto('/candidates/balakrishnan.jpg')}
+                            >
+                              Balan (President)
+                            </button>
+                            <input 
+                              type="file" 
+                              ref={tplFlyerInputRef} 
+                              accept="image/*" 
+                              style={{ display: 'none' }} 
+                              onChange={handlePhotoUpload} 
+                            />
+                            {customFlyerData ? (
+                              <button 
+                                type="button"
+                                className="var-tag-btn" 
+                                style={{ 
+                                  cursor: 'pointer', 
+                                  display: 'inline-flex', 
+                                  alignItems: 'center', 
+                                  gap: 4,
+                                  borderColor: (templatePhoto === customFlyerData || templatePhoto.startsWith('data:')) ? '#10b981' : undefined,
+                                  color: (templatePhoto === customFlyerData || templatePhoto.startsWith('data:')) ? '#10b981' : undefined,
+                                  background: (templatePhoto === customFlyerData || templatePhoto.startsWith('data:')) ? 'rgba(16,185,129,0.12)' : undefined,
+                                  fontWeight: (templatePhoto === customFlyerData || templatePhoto.startsWith('data:')) ? 600 : 400
+                                }}
+                                onClick={() => {
+                                  if (templatePhoto !== customFlyerData) {
+                                    setTemplatePhoto(customFlyerData);
+                                  } else {
+                                    tplFlyerInputRef.current?.click();
+                                  }
+                                }}
+                                title="Click to select or click again to replace flyer"
+                              >
+                                <Upload size={11} /> {(templatePhoto === customFlyerData || templatePhoto.startsWith('data:')) ? (customFlyerName ? `✓ Custom: ${customFlyerName.length > 18 ? customFlyerName.slice(0, 15) + '...' : customFlyerName}` : '✓ Custom Flyer') : `Custom: ${customFlyerName ? (customFlyerName.length > 12 ? customFlyerName.slice(0, 9) + '...' : customFlyerName) : 'Flyer'}`}
+                              </button>
+                            ) : null}
+                            <button 
+                              type="button"
+                              className="var-tag-btn" 
+                              style={{ 
+                                cursor: 'pointer', 
+                                display: 'inline-flex', 
+                                alignItems: 'center', 
+                                gap: 4,
+                                borderColor: (!customFlyerData && templatePhoto.startsWith('data:')) ? '#10b981' : undefined,
+                                color: (!customFlyerData && templatePhoto.startsWith('data:')) ? '#10b981' : undefined
+                              }}
+                              onClick={() => tplFlyerInputRef.current?.click()}
+                            >
+                              <Upload size={11} /> {customFlyerData ? 'Upload New Flyer' : 'Upload Custom Flyer'}
+                            </button>
+                          </div>
+                          <span style={{ fontSize: 11, color: 'var(--color-text-secondary)' }}>
+                            💡 <em>Click <strong>Copy Photo</strong> to copy the image, then in WhatsApp Web press <strong>Ctrl+V</strong> to attach it! In Bulk WhatsApp apps, attach this poster using the 'Attach Media' button.</em>
+                          </span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
                   <textarea 
                     className="drawer-textarea" 
                     value={templates.whatsapp} 
                     onChange={(e) => setTemplates(p => ({ ...p, whatsapp: e.target.value }))}
-                    style={{ height: 180 }}
+                    style={{ height: 160 }}
+                    placeholder="Enter WhatsApp template with emojis..."
                   />
-                  <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-                    <button className="btn primary" onClick={() => alert('WhatsApp template updated locally!')}>
-                      <Save size={14} /> Update Template
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 8 }}>
+                    <button 
+                      type="button" 
+                      className="btn" 
+                      onClick={() => {
+                        navigator.clipboard.writeText(templates.whatsapp);
+                        alert('WhatsApp template copied to clipboard with all emojis!');
+                      }}
+                    >
+                      <Copy size={14} /> Copy Template
+                    </button>
+                    <button 
+                      type="button" 
+                      className="btn primary" 
+                      onClick={() => {
+                        localStorage.setItem('campaign_templates', JSON.stringify(templates));
+                        alert('WhatsApp template saved! Emojis and formatting are permanently stored locally.');
+                      }}
+                    >
+                      <Save size={14} /> Save Template
                     </button>
                   </div>
                 </div>
 
                 {/* Email template card */}
                 <div className="template-card">
-                  <h3 className="panel-title" style={{ color: '#3b82f6' }}>
-                    <Mail size={18} /> Email Message Template
-                  </h3>
-                  <div className="template-variables">
-                    <span className="var-tag">&#123;Name&#125;</span>
-                    <span className="var-tag">&#123;AccCode&#125;</span>
-                    <span className="var-tag">&#123;SerialNo&#125;</span>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                    <h3 className="panel-title" style={{ color: '#3b82f6', margin: 0 }}>
+                      <Mail size={18} /> Email Message Template
+                    </h3>
+                  </div>
+                  <div className="template-variables" style={{ marginBottom: 8 }}>
+                    <span style={{ fontSize: 12, color: 'var(--color-text-muted)', alignSelf: 'center' }}>Insert Tag:</span>
+                    <button type="button" className="var-tag-btn" onClick={() => setTemplates(p => ({ ...p, email: p.email + ' {Name}' }))}>+ &#123;Name&#125;</button>
+                    <button type="button" className="var-tag-btn" onClick={() => setTemplates(p => ({ ...p, email: p.email + ' {AccCode}' }))}>+ &#123;AccCode&#125;</button>
+                    <button type="button" className="var-tag-btn" onClick={() => setTemplates(p => ({ ...p, email: p.email + ' {SerialNo}' }))}>+ &#123;SerialNo&#125;</button>
                   </div>
                   <textarea 
                     className="drawer-textarea" 
                     value={templates.email} 
                     onChange={(e) => setTemplates(p => ({ ...p, email: e.target.value }))}
-                    style={{ height: 180 }}
+                    style={{ height: 195 }}
                   />
-                  <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-                    <button className="btn primary" onClick={() => alert('Email template updated locally!')}>
-                      <Save size={14} /> Update Template
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 8 }}>
+                    <button 
+                      type="button" 
+                      className="btn" 
+                      onClick={() => {
+                        navigator.clipboard.writeText(templates.email);
+                        alert('Email template copied to clipboard!');
+                      }}
+                    >
+                      <Copy size={14} /> Copy Template
+                    </button>
+                    <button 
+                      type="button" 
+                      className="btn primary" 
+                      onClick={() => {
+                        localStorage.setItem('campaign_templates', JSON.stringify(templates));
+                        alert('Email template updated locally!');
+                      }}
+                    >
+                      <Save size={14} /> Save Template
                     </button>
                   </div>
                 </div>
 
                 {/* Call center script card */}
                 <div className="template-card">
-                  <h3 className="panel-title" style={{ color: '#f59e0b' }}>
-                    <Phone size={18} /> Call Center Talk Script
-                  </h3>
-                  <div className="template-variables">
-                    <span className="var-tag">&#123;Name&#125;</span>
-                    <span className="var-tag">&#123;AccCode&#125;</span>
-                    <span className="var-tag">&#123;SerialNo&#125;</span>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                    <h3 className="panel-title" style={{ color: '#f59e0b', margin: 0 }}>
+                      <Phone size={18} /> Call Center Talk Script
+                    </h3>
+                  </div>
+                  <div className="template-variables" style={{ marginBottom: 8 }}>
+                    <span style={{ fontSize: 12, color: 'var(--color-text-muted)', alignSelf: 'center' }}>Insert Tag:</span>
+                    <button type="button" className="var-tag-btn" onClick={() => setTemplates(p => ({ ...p, callScript: p.callScript + ' {Name}' }))}>+ &#123;Name&#125;</button>
+                    <button type="button" className="var-tag-btn" onClick={() => setTemplates(p => ({ ...p, callScript: p.callScript + ' {AccCode}' }))}>+ &#123;AccCode&#125;</button>
+                    <button type="button" className="var-tag-btn" onClick={() => setTemplates(p => ({ ...p, callScript: p.callScript + ' {SerialNo}' }))}>+ &#123;SerialNo&#125;</button>
                   </div>
                   <textarea 
                     className="drawer-textarea" 
                     value={templates.callScript} 
                     onChange={(e) => setTemplates(p => ({ ...p, callScript: e.target.value }))}
-                    style={{ height: 180 }}
+                    style={{ height: 195 }}
                   />
-                  <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-                    <button className="btn primary" onClick={() => alert('Call script template updated locally!')}>
-                      <Save size={14} /> Update Script
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 8 }}>
+                    <button 
+                      type="button" 
+                      className="btn" 
+                      onClick={() => {
+                        navigator.clipboard.writeText(templates.callScript);
+                        alert('Call script copied to clipboard!');
+                      }}
+                    >
+                      <Copy size={14} /> Copy Script
+                    </button>
+                    <button 
+                      type="button" 
+                      className="btn primary" 
+                      onClick={() => {
+                        localStorage.setItem('campaign_templates', JSON.stringify(templates));
+                        alert('Call script template updated locally!');
+                      }}
+                    >
+                      <Save size={14} /> Save Script
                     </button>
                   </div>
                 </div>
 
                 {/* SMS Textbee template card */}
                 <div className="template-card">
-                  <h3 className="panel-title" style={{ color: '#ec4899' }}>
-                    <Smartphone size={18} /> SMS Template (Textbee Android Gateway)
-                  </h3>
-                  <div className="template-variables">
-                    <span className="var-tag">&#123;Name&#125;</span>
-                    <span className="var-tag">&#123;AccCode&#125;</span>
-                    <span className="var-tag">&#123;SerialNo&#125;</span>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                    <h3 className="panel-title" style={{ color: '#ec4899', margin: 0 }}>
+                      <Smartphone size={18} /> SMS Template (Textbee Android Gateway)
+                    </h3>
+                  </div>
+                  <div className="template-variables" style={{ marginBottom: 8 }}>
+                    <span style={{ fontSize: 12, color: 'var(--color-text-muted)', alignSelf: 'center' }}>Insert Tag:</span>
+                    <button type="button" className="var-tag-btn" onClick={() => setTemplates(p => ({ ...p, sms: p.sms + ' {Name}' }))}>+ &#123;Name&#125;</button>
+                    <button type="button" className="var-tag-btn" onClick={() => setTemplates(p => ({ ...p, sms: p.sms + ' {AccCode}' }))}>+ &#123;AccCode&#125;</button>
+                    <button type="button" className="var-tag-btn" onClick={() => setTemplates(p => ({ ...p, sms: p.sms + ' {SerialNo}' }))}>+ &#123;SerialNo&#125;</button>
                   </div>
                   <textarea 
                     className="drawer-textarea" 
                     value={templates.sms} 
                     onChange={(e) => setTemplates(p => ({ ...p, sms: e.target.value }))}
-                    style={{ height: 180 }}
+                    style={{ height: 160 }}
                   />
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 8 }}>
                     <span style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>
                       {templates.sms.length} chars (~{Math.ceil(templates.sms.length / 160) || 1} SMS)
                     </span>
-                    <button className="btn primary" onClick={() => alert('SMS template updated locally!')}>
-                      <Save size={14} /> Update Template
-                    </button>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <button 
+                        type="button" 
+                        className="btn" 
+                        onClick={() => {
+                          navigator.clipboard.writeText(templates.sms);
+                          alert('SMS template copied to clipboard!');
+                        }}
+                      >
+                        <Copy size={14} /> Copy
+                      </button>
+                      <button 
+                        type="button" 
+                        className="btn primary" 
+                        onClick={() => {
+                          localStorage.setItem('campaign_templates', JSON.stringify(templates));
+                          alert('SMS template updated locally!');
+                        }}
+                      >
+                        <Save size={14} /> Save Template
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -4747,9 +5586,76 @@ export default function App() {
             </div>
             
             <p style={{ fontSize: 14, color: 'var(--color-text-secondary)', marginBottom: 12 }}>
-              You have been redirected to send a WhatsApp message to <strong>{waConfirmContact.account_name}</strong> ({waConfirmContact.mobile_number}). 
+              Opening WhatsApp for <strong>{waConfirmContact.account_name}</strong> ({waConfirmContact.mobile_number}). 
               What was the outcome?
             </p>
+
+            {/* Clipboard and Media Support Notification */}
+            <div style={{ padding: '12px 14px', background: 'rgba(16, 185, 129, 0.08)', borderRadius: 8, border: '1px solid rgba(16, 185, 129, 0.25)', marginBottom: 14 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, flexWrap: 'wrap', gap: 6 }}>
+                <span style={{ color: '#10b981', fontWeight: 600, fontSize: 13, display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <CheckCircle size={15} /> Message & Emojis Ready
+                </span>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  {isPhotoEnabled && (
+                    <button 
+                      type="button"
+                      className="btn" 
+                      style={{ padding: '2px 8px', fontSize: 11 }}
+                      onClick={() => copyPhotoToClipboard()}
+                      title="Copy photo directly to clipboard so you can press Ctrl+V into WhatsApp"
+                    >
+                      <ImageIcon size={12} color="#10b981" /> Copy Photo (Ctrl+V)
+                    </button>
+                  )}
+                  <button 
+                    type="button"
+                    className="btn" 
+                    style={{ padding: '2px 8px', fontSize: 11 }}
+                    onClick={() => copyMessageToClipboard(waConfirmContact)}
+                  >
+                    <Copy size={12} /> {copiedContactId === waConfirmContact.id ? 'Copied!' : 'Copy Text'}
+                  </button>
+                </div>
+              </div>
+
+              {/* Poster Notice & Action Block */}
+              {isPhotoEnabled && (
+                <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 12, padding: '10px 12px', background: 'var(--color-bg-primary)', borderRadius: 6, border: '1px solid rgba(16, 185, 129, 0.35)' }}>
+                  <div style={{ position: 'relative', width: 64, height: 64, borderRadius: 6, overflow: 'hidden', border: '2px solid #10b981', flexShrink: 0, background: '#000' }}>
+                    <img src={templatePhoto} alt="Poster" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                    {(templatePhoto.startsWith('data:') || (customFlyerData && templatePhoto === customFlyerData)) && (
+                      <span style={{ position: 'absolute', bottom: 0, left: 0, right: 0, background: 'rgba(16,185,129,0.92)', color: '#fff', fontSize: 8, fontWeight: 700, textAlign: 'center', padding: '1px 0', letterSpacing: '0.5px' }}>
+                        CUSTOM
+                      </span>
+                    )}
+                  </div>
+                  <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', flex: 1 }}>
+                    <div style={{ fontWeight: 600, color: '#10b981', fontSize: 13, marginBottom: 2 }}>
+                      📷 Campaign Poster Ready in Clipboard
+                    </div>
+                    <div style={{ fontSize: 11, color: 'var(--color-text-muted)', lineHeight: 1.3 }}>
+                      WhatsApp Web links cannot attach images automatically due to WhatsApp security.
+                    </div>
+                    <div style={{ marginTop: 4, fontWeight: 600, color: 'var(--color-text-white)', fontSize: 11 }}>
+                      👉 In WhatsApp Web, simply press <kbd style={{ background: 'rgba(255,255,255,0.1)', padding: '2px 6px', borderRadius: 4, border: '1px solid var(--border-color)', color: '#34d399' }}>Ctrl + V</kbd> to paste the poster!
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', whiteSpace: 'pre-line', maxHeight: 80, overflowY: 'auto', background: 'var(--color-bg-primary)', padding: 8, borderRadius: 4, border: '1px solid var(--border-color)' }}>
+                {formatTemplateMessage(templates.whatsapp, waConfirmContact)}
+              </div>
+
+              <div style={{ fontSize: 11, color: 'var(--color-text-muted)', marginTop: 8 }}>
+                {isPhotoEnabled ? (
+                  <span>💡 <em>To attach poster: Press <strong>Ctrl+V</strong> in WhatsApp Web. To re-copy text, click 'Copy Text'.</em></span>
+                ) : (
+                  <span>💡 <em>Tip: If WhatsApp Web displays any emoji as '?', simply press <strong>Ctrl+V</strong> in the chat input to paste the exact emoji message!</em></span>
+                )}
+              </div>
+            </div>
 
             {/* Voter Sentiment Option */}
             <div className="drawer-field" style={{ marginBottom: 16 }}>
@@ -4791,6 +5697,67 @@ export default function App() {
             
             <div className="modal-footer" style={{ borderTop: '1px solid var(--border-color)', paddingTop: 12 }}>
               <button type="button" className="btn" onClick={() => setWaConfirmContact(null)}>Skip Log</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ==================== BULK POSTER SENDING GUIDE MODAL ==================== */}
+      {showBulkPhotoGuide && (
+        <div className="modal-backdrop" onClick={() => setShowBulkPhotoGuide(false)}>
+          <div className="modal" style={{ maxWidth: '580px', width: '92%' }} onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3 className="drawer-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <ImageIcon color="#10b981" /> How to Send Poster in WhatsApp Messages
+              </h3>
+              <button className="close-btn" onClick={() => setShowBulkPhotoGuide(false)}><X size={20} /></button>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 14, fontSize: 13, color: 'var(--color-text-secondary)', marginTop: 8 }}>
+              <div style={{ padding: '12px 14px', background: 'rgba(16, 185, 129, 0.08)', borderRadius: 8, border: '1px solid rgba(16, 185, 129, 0.25)' }}>
+                <div style={{ fontWeight: 600, color: '#10b981', marginBottom: 4, fontSize: 14 }}>
+                  Why didn't the poster attach automatically?
+                </div>
+                <div>
+                  WhatsApp's official web/mobile links (Click-to-Chat) <strong>only permit pre-filling text</strong>. WhatsApp strictly blocks all websites on the internet from attaching local image files directly via URL for privacy and security.
+                </div>
+              </div>
+
+              <div style={{ padding: '14px 16px', background: 'var(--color-bg-card)', borderRadius: 8, border: '1px solid var(--border-color)' }}>
+                <div style={{ fontWeight: 600, color: 'var(--color-text-white)', marginBottom: 8, fontSize: 14, display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span>🚀 Method 1: Using your Bulk WhatsApp App (Recommended for All Voters)</span>
+                </div>
+                <ol style={{ margin: 0, paddingLeft: 18, lineHeight: 1.6, fontSize: 12 }}>
+                  <li>Click <strong>Download Poster</strong> in our app toolbar to save the poster file (<code>AnilKumar_Campaign_Poster.jpg</code>) on your PC.</li>
+                  <li>Click <strong>Export for Bulk App (.xlsx)</strong> to download your contact list with all personalized voter messages.</li>
+                  <li>In your <strong>Bulk WhatsApp Software</strong> (e.g. WA Sender, Bulk WhatsApp Sender):
+                    <ul style={{ paddingLeft: 16, marginTop: 4 }}>
+                      <li>Click the <strong>"Attach File / Media"</strong> button and select <code>AnilKumar_Campaign_Poster.jpg</code>.</li>
+                      <li>Import the <code>.xlsx</code> file.</li>
+                      <li>Click <strong>Send / Start Campaign</strong>.</li>
+                    </ul>
+                  </li>
+                  <li style={{ color: '#10b981', fontWeight: 600, marginTop: 4 }}>The bulk app will dispatch the poster image with the personalized message caption to every voter!</li>
+                </ol>
+              </div>
+
+              <div style={{ padding: '14px 16px', background: 'var(--color-bg-card)', borderRadius: 8, border: '1px solid var(--border-color)' }}>
+                <div style={{ fontWeight: 600, color: 'var(--color-text-white)', marginBottom: 8, fontSize: 14, display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span>⚡ Method 2: In WhatsApp Web (Click-to-Chat)</span>
+                </div>
+                <ol style={{ margin: 0, paddingLeft: 18, lineHeight: 1.6, fontSize: 12 }}>
+                  <li>Click <strong>Send Message</strong> next to any contact (our app automatically copies the poster to your clipboard).</li>
+                  <li>When WhatsApp Web opens, simply press <kbd style={{ background: 'rgba(255,255,255,0.1)', padding: '2px 6px', borderRadius: 4 }}>Ctrl + V</kbd>. The poster pops up instantly!</li>
+                  <li>Add/confirm the caption and press Send.</li>
+                </ol>
+              </div>
+            </div>
+
+            <div className="modal-footer" style={{ borderTop: '1px solid var(--border-color)', paddingTop: 14, marginTop: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <button type="button" className="btn primary" style={{ background: '#10b981', borderColor: '#10b981', display: 'inline-flex', alignItems: 'center', gap: 6 }} onClick={() => downloadCampaignPhoto()}>
+                <Download size={14} /> Download Poster File
+              </button>
+              <button type="button" className="btn" onClick={() => setShowBulkPhotoGuide(false)}>Close Guide</button>
             </div>
           </div>
         </div>

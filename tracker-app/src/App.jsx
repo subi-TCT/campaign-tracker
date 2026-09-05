@@ -3,9 +3,10 @@ import {
   Users, Mail, Phone, MessageSquare, AlertTriangle, Search, 
   ChevronLeft, ChevronRight, CheckCircle, Clock, Edit2, 
   Plus, FileText, Settings, HelpCircle, Save, ExternalLink,
-  Sun, Moon, Upload, AlertCircle, X, Vote, Award, BarChart2, Map, Menu,
-  Smartphone, Send, Inbox, RefreshCw
+  Sun, Moon, Upload, AlertCircle, X, Vote, Award, BarChart2, Menu,
+  Smartphone, Send, Inbox, RefreshCw, Database, Download, MapPin
 } from 'lucide-react';
+import * as XLSX from 'xlsx';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001/api';
 
@@ -92,11 +93,35 @@ export default function App() {
   const [newContact, setNewContact] = useState({ name: '', accCode: '', mobile: '', email: '', district: '', area: '' });
   const [waConfirmContact, setWaConfirmContact] = useState(null); // Contact currently sending WA to
 
-  // Bulk Import Logs modal states
+  // Bulk Import Logs modal states (Email)
   const [showImportModal, setShowImportModal] = useState(false);
   const [importTab, setImportTab] = useState('sent'); // 'sent' or 'failed'
   const [importRawText, setImportRawText] = useState('');
   const [importAnalysis, setImportAnalysis] = useState(null);
+
+  // Bulk WhatsApp Numbers Import modal states
+  const [showWaImportModal, setShowWaImportModal] = useState(false);
+  const [waImportTab, setWaImportTab] = useState('sent'); // 'sent' or 'failed'
+  const [waImportRawText, setWaImportRawText] = useState('');
+  const [waImportAnalysis, setWaImportAnalysis] = useState(null);
+  const [waImportStatus, setWaImportStatus] = useState('Sent');
+  const [waImportDate, setWaImportDate] = useState(() => new Date().toISOString().split('T')[0]);
+  const [waImportSentiment, setWaImportSentiment] = useState('');
+  const [waSelectedMatchIds, setWaSelectedMatchIds] = useState([]);
+  const [waImportError, setWaImportError] = useState('');
+  const [isAnalyzingWa, setIsAnalyzingWa] = useState(false);
+
+  // Bulk Import & Update Master Contacts Modal states
+  const [showMasterImportModal, setShowMasterImportModal] = useState(false);
+  const [masterImportTab, setMasterImportTab] = useState('file'); // 'file' or 'paste'
+  const [masterImportRawText, setMasterImportRawText] = useState('');
+  const [masterImportFileName, setMasterImportFileName] = useState('');
+  const [masterImportAnalysis, setMasterImportAnalysis] = useState(null);
+  const [masterInsertNew, setMasterInsertNew] = useState(true);
+  const [masterSelectedAccCodes, setMasterSelectedAccCodes] = useState([]);
+  const [masterImportError, setMasterImportError] = useState('');
+  const [isAnalyzingMaster, setIsAnalyzingMaster] = useState(false);
+  const [isExecutingMaster, setIsExecutingMaster] = useState(false);
 
   // Exit poll win threshold
   const [exitPollTarget, setExitPollTarget] = useState(
@@ -399,19 +424,23 @@ export default function App() {
   };
 
   // Bulk update whatsapp status
-  const handleBulkWhatsAppUpdate = async (status, idsToUpdate = null) => {
+  const handleBulkWhatsAppUpdate = async (status, idsToUpdate = null, customDate = null, sentiment = null) => {
     const ids = idsToUpdate || selectedContactIds;
     if (ids.length === 0) return;
     try {
-      const today = getTodayString();
+      const today = customDate || getTodayString();
+      const payload = {
+        ids,
+        status,
+        date: today
+      };
+      if (sentiment && sentiment.trim() && sentiment !== 'Keep Current') {
+        payload.sentiment = sentiment;
+      }
       const res = await fetch(`${API_BASE}/contacts/bulk-whatsapp`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ids,
-          status,
-          date: today
-        })
+        body: JSON.stringify(payload)
       });
       if (!res.ok) throw new Error('Bulk WhatsApp update failed');
       
@@ -638,6 +667,564 @@ export default function App() {
     setShowImportModal(false);
     setImportRawText('');
     setImportAnalysis(null);
+  };
+
+  // Helper to normalize phone numbers for UAE & international matching
+  const normalizePhoneNumber = (raw) => {
+    if (!raw) return '';
+    let digits = String(raw).replace(/\D/g, '');
+    if (!digits) return '';
+    if (digits.startsWith('00971')) digits = '971' + digits.slice(5);
+    else if (digits.startsWith('05') && digits.length === 10) digits = '971' + digits.slice(1);
+    else if (digits.startsWith('5') && digits.length === 9) digits = '971' + digits;
+    return digits;
+  };
+
+  // Helper to parse pasted bulk WhatsApp text
+  const parsePastedWhatsAppText = (text) => {
+    if (!text) return [];
+    const lines = text.split(/[\r\n]+/);
+    const items = [];
+
+    for (let rawLine of lines) {
+      let line = rawLine.trim();
+      if (!line) continue;
+
+      const lower = line.toLowerCase();
+      let detectedStatus = null;
+      if (lower.includes('delivered') || lower.includes('success')) detectedStatus = 'Delivered';
+      else if (lower.includes('failed') || lower.includes('invalid') || lower.includes('error') || lower.includes('undelivered') || lower.includes('not on whatsapp')) detectedStatus = 'Failed';
+      else if (lower.includes('sent')) detectedStatus = 'Sent';
+      else if (lower.includes('pending')) detectedStatus = 'Pending';
+
+      // 1. First, search for formatted phone numbers (e.g. +971 50 646 4369, +971-50-646-7801, 050-646-4369, 050 646 4369)
+      const spacedPhoneRegex = /(?:\+|00)?971[\s-]\d{1,2}[\s-]\d{3,4}[\s-]\d{3,4}|(?:\+|00)?971[\s-]\d{2}[\s-]\d{6,7}|05\d[\s-]\d{3}[\s-]\d{4}/g;
+      const formattedMatches = line.match(spacedPhoneRegex) || [];
+      for (const fm of formattedMatches) {
+        const clean = fm.replace(/\D/g, '');
+        if (clean.length >= 9 && clean.length <= 15) {
+          items.push({
+            raw: fm.trim(),
+            normalized: normalizePhoneNumber(clean),
+            last9: clean.slice(-9),
+            detectedStatus
+          });
+        }
+        line = line.replace(fm, ' ');
+      }
+
+      // 2. Tokenize remaining line by spaces, commas, semicolons, tabs, pipes, brackets, colons
+      const tokens = line.split(/[\s,;\t|\[\](){}\"\'<>]+/);
+      for (const token of tokens) {
+        // Ignore obvious time tokens like 10:30:15
+        if (token.includes(':') && token.length <= 10) continue;
+        const clean = token.replace(/\D/g, '');
+        if (clean.length >= 9 && clean.length <= 15) {
+          items.push({
+            raw: token.trim(),
+            normalized: normalizePhoneNumber(clean),
+            last9: clean.slice(-9),
+            detectedStatus
+          });
+        }
+      }
+    }
+
+    // Deduplicate by normalized number while preserving status if detected
+    const uniqueMap = {};
+    for (const item of items) {
+      if (!uniqueMap[item.normalized] || (item.detectedStatus && !uniqueMap[item.normalized].detectedStatus)) {
+        uniqueMap[item.normalized] = item;
+      }
+    }
+    return Object.values(uniqueMap);
+  };
+
+  // Analyze Copy-Pasted WhatsApp Numbers List
+  const handleAnalyzeWaImport = () => {
+    setWaImportError('');
+    if (!waImportRawText || !waImportRawText.trim()) {
+      setWaImportError('Please paste phone numbers or campaign logs into the box above.');
+      return;
+    }
+
+    setIsAnalyzingWa(true);
+    try {
+      const parsedItems = parsePastedWhatsAppText(waImportRawText);
+
+      if (parsedItems.length === 0) {
+        setWaImportError('No valid phone numbers found in the pasted text. Please paste valid numbers (e.g. 050..., +971 50..., 97150...).');
+        setIsAnalyzingWa(false);
+        return;
+      }
+
+      const matchedContacts = [];
+      const matchedContactIds = {};
+      const unmatchedNumbers = [];
+
+      // Pre-index contacts by normalized numbers & last 9 digits for rapid matching
+      const contactList = Array.isArray(contacts) ? contacts : [];
+      const contactIndex = contactList.map(c => {
+        const norm = normalizePhoneNumber(c.mobile_number);
+        return {
+          contact: c,
+          normalized: norm,
+          last9: norm.length >= 9 ? norm.slice(-9) : norm,
+          accCode: (c.acc_code || '').toUpperCase().trim()
+        };
+      });
+
+      parsedItems.forEach(item => {
+        let found = false;
+        for (const entry of contactIndex) {
+          const isMatch = (entry.normalized && entry.normalized === item.normalized) ||
+                          (item.last9 && entry.last9 && entry.last9 === item.last9);
+          if (isMatch) {
+            found = true;
+            if (!matchedContactIds[entry.contact.id]) {
+              matchedContactIds[entry.contact.id] = true;
+              matchedContacts.push({
+                ...entry.contact,
+                detectedStatus: item.detectedStatus
+              });
+            }
+          }
+        }
+
+        if (!found) {
+          unmatchedNumbers.push(item.raw || item.normalized);
+        }
+      });
+
+      const targetStatus = waImportStatus || (waImportTab === 'sent' ? 'Sent' : 'Failed');
+      const alreadyStatusCount = matchedContacts.filter(c => c.whatsapp_status === targetStatus).length;
+      const toUpdateCount = matchedContacts.length - alreadyStatusCount;
+
+      setWaImportAnalysis({
+        numbersParsedCount: parsedItems.length,
+        matchedContacts,
+        unmatchedNumbers,
+        alreadyStatusCount,
+        toUpdateCount
+      });
+      setWaSelectedMatchIds(matchedContacts.map(c => c.id));
+    } catch (err) {
+      console.error('Error during WhatsApp import analysis:', err);
+      setWaImportError('Error parsing numbers: ' + err.message);
+    } finally {
+      setIsAnalyzingWa(false);
+    }
+  };
+
+  // Execute Bulk WhatsApp Import Update
+  const handleExecuteWaImport = async () => {
+    if (!waImportAnalysis || waSelectedMatchIds.length === 0) {
+      alert('No contacts selected for update.');
+      return;
+    }
+
+    const targetStatus = waImportStatus || (waImportTab === 'sent' ? 'Sent' : 'Failed');
+    const dateToUse = waImportDate || getTodayString();
+    const sentimentToUse = waImportSentiment || null;
+
+    await handleBulkWhatsAppUpdate(targetStatus, waSelectedMatchIds, dateToUse, sentimentToUse);
+
+    alert(`Successfully updated WhatsApp status to '${targetStatus}' for ${waSelectedMatchIds.length} contact(s).`);
+    setShowWaImportModal(false);
+    setWaImportRawText('');
+    setWaImportAnalysis(null);
+    setWaSelectedMatchIds([]);
+    setWaImportError('');
+  };
+
+  // Download Master Contacts Template (.xlsx or .csv)
+  const handleDownloadMasterTemplate = (format = 'xlsx') => {
+    const headers = [
+      'AccCode',
+      'AccountName',
+      'Mobile Number',
+      'Email ID',
+      'District',
+      'Area',
+      'Emirate',
+      'Assigned To',
+      'Voter Sentiment',
+      'Notes',
+      'Account Status',
+      'S.No'
+    ];
+
+    const sampleRows = [
+      [
+        'L190',
+        'Muhammed Rashid',
+        '971501234567',
+        'rashid@example.com',
+        'KOZHIKODE',
+        'CITY',
+        'Dubai',
+        'Anil Kumar',
+        'Strong Support (Panel)',
+        'Verified membership & support',
+        'Active',
+        101
+      ],
+      [
+        'L191',
+        'Priya Nair',
+        '0509876543',
+        'priya@example.com',
+        'ERNAKULAM',
+        'ALUVA',
+        'Sharjah',
+        'Unassigned',
+        'Undecided / Needs Follow-up',
+        'Requested election manifesto',
+        'Active',
+        102
+      ],
+      [
+        'L192',
+        'Abdul Kareem',
+        '+971 50 555 1234',
+        '',
+        'MALAPPURAM',
+        'MANJERI',
+        'Abu Dhabi',
+        'Unassigned',
+        'Unknown',
+        'Fill only available columns',
+        'Active',
+        103
+      ]
+    ];
+
+    if (format === 'csv') {
+      const allRows = [headers, ...sampleRows];
+      const csvContent = "data:text/csv;charset=utf-8," 
+        + allRows.map(r => r.map(val => `"${String(val ?? '').replace(/"/g, '""')}"`).join(',')).join('\n');
+      const encodedUri = encodeURI(csvContent);
+      const link = document.createElement("a");
+      link.setAttribute("href", encodedUri);
+      link.setAttribute("download", "IAS_Master_Contacts_Template.csv");
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    } else {
+      // XLSX format
+      const wsData = [headers, ...sampleRows];
+      const ws = XLSX.utils.aoa_to_sheet(wsData);
+      
+      // Set column widths
+      ws['!cols'] = [
+        { wch: 12 }, // AccCode
+        { wch: 25 }, // AccountName
+        { wch: 18 }, // Mobile Number
+        { wch: 25 }, // Email ID
+        { wch: 18 }, // District
+        { wch: 16 }, // Area
+        { wch: 14 }, // Emirate
+        { wch: 16 }, // Assigned To
+        { wch: 26 }, // Voter Sentiment
+        { wch: 30 }, // Notes
+        { wch: 14 }, // Account Status
+        { wch: 8 }   // S.No
+      ];
+
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "Contacts_Template");
+      XLSX.writeFile(wb, "IAS_Master_Contacts_Template.xlsx");
+    }
+  };
+
+  // Helper to normalize imported row keys to standard contact fields
+  const normalizeRowKeys = (row) => {
+    const normalized = {};
+    for (const rawKey of Object.keys(row)) {
+      const cleanKey = rawKey.toLowerCase().replace(/[^a-z0-9]/g, '');
+      const val = row[rawKey];
+      if (val === undefined || val === null) continue;
+      const strVal = String(val).trim();
+      if (!strVal) continue;
+
+      if (cleanKey === 'acccode' || cleanKey === 'accountcode' || cleanKey === 'memberno' || cleanKey === 'membershipno') {
+        normalized.acc_code = strVal.replace(/\.0$/, '');
+      } else if (cleanKey === 'accountname' || cleanKey === 'name' || cleanKey === 'votername' || cleanKey === 'fullname') {
+        normalized.account_name = strVal;
+      } else if (cleanKey === 'mobilenumber' || cleanKey === 'mobile' || cleanKey === 'phone' || cleanKey === 'phonenumber' || cleanKey === 'contactnumber') {
+        normalized.mobile_number = strVal;
+      } else if (cleanKey === 'emailid' || cleanKey === 'email' || cleanKey === 'emailaddress') {
+        normalized.email_id = strVal;
+      } else if (cleanKey === 'district') {
+        normalized.district = strVal;
+      } else if (cleanKey === 'area') {
+        normalized.area = strVal;
+      } else if (cleanKey === 'emirate') {
+        normalized.emirate = strVal;
+      } else if (cleanKey === 'assignedto' || cleanKey === 'volunteer' || cleanKey === 'assigned') {
+        normalized.assigned_to = strVal;
+      } else if (cleanKey === 'votersentiment' || cleanKey === 'sentiment' || cleanKey === 'memberreaction' || cleanKey === 'reaction') {
+        normalized.member_reaction = strVal;
+      } else if (cleanKey === 'notes' || cleanKey === 'note') {
+        normalized.notes = strVal;
+      } else if (cleanKey === 'accountstatus' || cleanKey === 'status') {
+        normalized.account_status = strVal;
+      } else if (cleanKey === 'sno' || cleanKey === 'slno' || cleanKey === 'serialno') {
+        normalized.s_no = parseInt(strVal, 10) || undefined;
+      }
+    }
+    return normalized;
+  };
+
+  // Run matching and change detection for master contact rows
+  const runMasterAnalysis = (rawRows) => {
+    setIsAnalyzingMaster(true);
+    setMasterImportError('');
+
+    try {
+      if (!Array.isArray(rawRows) || rawRows.length === 0) {
+        setMasterImportError('File or pasted data contains no records.');
+        setIsAnalyzingMaster(false);
+        return;
+      }
+
+      // Pre-index existing contacts by uppercase acc_code
+      const existingMap = {};
+      (contacts || []).forEach(c => {
+        if (c.acc_code) {
+          existingMap[String(c.acc_code).trim().toUpperCase()] = c;
+        }
+      });
+
+      const matchedRows = [];
+      const newRows = [];
+      const skippedRows = [];
+
+      for (let i = 0; i < rawRows.length; i++) {
+        const normalized = normalizeRowKeys(rawRows[i]);
+        if (!normalized.acc_code) {
+          skippedRows.push({ rowNumber: i + 1, reason: 'Missing AccCode', raw: rawRows[i] });
+          continue;
+        }
+
+        const cleanAccCode = normalized.acc_code.toUpperCase();
+        const existing = existingMap[cleanAccCode];
+
+        if (existing) {
+          // Detect changes
+          const changes = [];
+          
+          if (normalized.account_name && normalized.account_name !== existing.account_name) {
+            changes.push({ field: 'Name', oldVal: existing.account_name || '(empty)', newVal: normalized.account_name });
+          }
+          if (normalized.mobile_number) {
+            const cleanNormMob = normalizePhoneNumber(normalized.mobile_number);
+            const cleanExistMob = normalizePhoneNumber(existing.mobile_number);
+            if (cleanNormMob && cleanNormMob !== cleanExistMob) {
+              changes.push({ field: 'Mobile', oldVal: existing.mobile_number || '(empty)', newVal: normalized.mobile_number });
+            }
+          }
+          if (normalized.email_id && normalized.email_id.toLowerCase() !== (existing.email_id || '').toLowerCase()) {
+            changes.push({ field: 'Email', oldVal: existing.email_id || '(empty)', newVal: normalized.email_id });
+          }
+          if (normalized.district && normalized.district !== existing.district) {
+            changes.push({ field: 'District', oldVal: existing.district || '(empty)', newVal: normalized.district });
+          }
+          if (normalized.area && normalized.area !== existing.area) {
+            changes.push({ field: 'Area', oldVal: existing.area || '(empty)', newVal: normalized.area });
+          }
+          if (normalized.emirate && normalized.emirate !== existing.emirate) {
+            changes.push({ field: 'Emirate', oldVal: existing.emirate || '(empty)', newVal: normalized.emirate });
+          }
+          if (normalized.assigned_to && normalized.assigned_to !== existing.assigned_to) {
+            changes.push({ field: 'Volunteer', oldVal: existing.assigned_to || 'Unassigned', newVal: normalized.assigned_to });
+          }
+          if (normalized.member_reaction && normalized.member_reaction !== existing.member_reaction) {
+            changes.push({ field: 'Sentiment', oldVal: existing.member_reaction || 'Unknown', newVal: normalized.member_reaction });
+          }
+          if (normalized.notes && normalized.notes !== existing.notes) {
+            changes.push({ field: 'Notes', oldVal: existing.notes || '(empty)', newVal: normalized.notes });
+          }
+          if (normalized.account_status && normalized.account_status !== existing.account_status) {
+            changes.push({ field: 'Status', oldVal: existing.account_status || 'Active', newVal: normalized.account_status });
+          }
+          if (normalized.s_no && normalized.s_no !== existing.s_no) {
+            changes.push({ field: 'S.No', oldVal: existing.s_no || 0, newVal: normalized.s_no });
+          }
+
+          matchedRows.push({
+            accCode: normalized.acc_code,
+            name: normalized.account_name || existing.account_name || 'Unnamed',
+            existingContact: existing,
+            normalized,
+            changes,
+            isNew: false
+          });
+        } else {
+          // New contact
+          newRows.push({
+            accCode: normalized.acc_code,
+            name: normalized.account_name || 'New Contact',
+            normalized,
+            changes: [{ field: 'New Contact', oldVal: '-', newVal: 'Full Insert' }],
+            isNew: true
+          });
+        }
+      }
+
+      if (matchedRows.length === 0 && newRows.length === 0) {
+        setMasterImportError('No valid contacts found. Please ensure your file has an "AccCode" column.');
+        setIsAnalyzingMaster(false);
+        return;
+      }
+
+      const allActionable = [...matchedRows, ...newRows];
+
+      setMasterImportAnalysis({
+        totalRawCount: rawRows.length,
+        matchedRows,
+        newRows,
+        skippedRows,
+        allActionable,
+        hasChangesCount: matchedRows.filter(m => m.changes.length > 0).length,
+        unchangedCount: matchedRows.filter(m => m.changes.length === 0).length
+      });
+
+      // Default select all actionable contacts
+      setMasterSelectedAccCodes(allActionable.map(r => r.accCode));
+    } catch (err) {
+      console.error('Error running master analysis:', err);
+      setMasterImportError('Analysis failed: ' + err.message);
+    } finally {
+      setIsAnalyzingMaster(false);
+    }
+  };
+
+  // Handle spreadsheet file upload (.xlsx, .xls, .csv, .txt)
+  const handleMasterFileSelect = (file) => {
+    if (!file) return;
+    setMasterImportFileName(file.name);
+    setMasterImportError('');
+    const reader = new FileReader();
+    const isExcel = file.name.endsWith('.xlsx') || file.name.endsWith('.xls');
+
+    if (isExcel) {
+      reader.onload = (e) => {
+        try {
+          const data = new Uint8Array(e.target.result);
+          const workbook = XLSX.read(data, { type: 'array' });
+          const firstSheetName = workbook.SheetNames[0];
+          const worksheet = workbook.Sheets[firstSheetName];
+          const json = XLSX.utils.sheet_to_json(worksheet, { defval: '' });
+          runMasterAnalysis(json);
+        } catch (err) {
+          console.error('Error reading Excel file:', err);
+          setMasterImportError('Failed to read Excel file: ' + err.message);
+        }
+      };
+      reader.readAsArrayBuffer(file);
+    } else {
+      reader.onload = (e) => {
+        try {
+          const text = e.target.result;
+          const workbook = XLSX.read(text, { type: 'string' });
+          const firstSheetName = workbook.SheetNames[0];
+          const worksheet = workbook.Sheets[firstSheetName];
+          const json = XLSX.utils.sheet_to_json(worksheet, { defval: '' });
+          runMasterAnalysis(json);
+        } catch (err) {
+          console.error('Error reading CSV text:', err);
+          setMasterImportError('Failed to parse CSV file: ' + err.message);
+        }
+      };
+      reader.readAsText(file);
+    }
+  };
+
+  // Handle pasted table analysis
+  const handleAnalyzePastedMasterText = () => {
+    setMasterImportError('');
+    if (!masterImportRawText.trim()) {
+      setMasterImportError('Please paste your table or CSV data into the box above.');
+      return;
+    }
+    try {
+      const workbook = XLSX.read(masterImportRawText, { type: 'string' });
+      const firstSheetName = workbook.SheetNames[0];
+      const worksheet = workbook.Sheets[firstSheetName];
+      const json = XLSX.utils.sheet_to_json(worksheet, { defval: '' });
+      if (json.length === 0) {
+        setMasterImportError('No valid rows found. Please ensure your pasted content has header columns (e.g. AccCode, Name, Mobile...).');
+        return;
+      }
+      runMasterAnalysis(json);
+    } catch (err) {
+      console.error('Error parsing pasted table:', err);
+      setMasterImportError('Failed to parse pasted table: ' + err.message);
+    }
+  };
+
+  // Execute Bulk Master Import & Update
+  const handleExecuteMasterImport = async () => {
+    if (!masterImportAnalysis) return;
+
+    const toProcess = masterImportAnalysis.allActionable
+      .filter(item => masterSelectedAccCodes.includes(item.accCode))
+      .filter(item => !item.isNew || masterInsertNew)
+      .map(item => item.normalized);
+
+    if (toProcess.length === 0) {
+      alert('No contacts selected for update / import.');
+      return;
+    }
+
+    setIsExecutingMaster(true);
+    try {
+      const res = await fetch(`${API_BASE}/contacts/bulk-import`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contacts: toProcess,
+          insertNew: masterInsertNew
+        })
+      });
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || 'Bulk import request failed');
+      }
+
+      const result = await res.json();
+      alert(`Bulk Import Complete!\n\n• Contacts Updated: ${result.updated}\n• New Contacts Inserted: ${result.inserted}\n• Unchanged: ${result.unchanged}`);
+
+      // Refresh database contacts
+      const refreshedContactsRes = await fetch(`${API_BASE}/contacts`);
+      if (refreshedContactsRes.ok) {
+        const data = await refreshedContactsRes.json();
+        setContacts(data);
+      }
+
+      // Refresh stats
+      const today = getTodayString();
+      const statsRes = await fetch(`${API_BASE}/stats?today=${today}`);
+      if (statsRes.ok) {
+        const statsData = await statsRes.json();
+        setStats(statsData);
+      }
+
+      // Reset modal states
+      setShowMasterImportModal(false);
+      setMasterImportAnalysis(null);
+      setMasterImportRawText('');
+      setMasterImportFileName('');
+      setMasterImportError('');
+      setMasterSelectedAccCodes([]);
+    } catch (err) {
+      console.error('Bulk import execution error:', err);
+      alert('Error during bulk import: ' + err.message);
+    } finally {
+      setIsExecutingMaster(false);
+    }
   };
 
   // Edit Candidate Details
@@ -1509,7 +2096,7 @@ export default function App() {
                 {/* 3. UAE Emirates */}
                 <div className="glass-panel" style={{ maxHeight: '420px', display: 'flex', flexDirection: 'column' }}>
                   <h3 className="panel-title" style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
-                    <Map size={16} color="#3b82f6" /> UAE Emirate Distribution
+                    <MapPin size={16} color="#3b82f6" /> UAE Emirate Distribution
                   </h3>
                   <div className="table-wrapper" style={{ overflowY: 'auto', flexGrow: 1 }}>
                     <table className="data-table small" style={{ width: '100%', fontSize: '12px' }}>
@@ -2145,6 +2732,19 @@ export default function App() {
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24, flexWrap: 'wrap', gap: 12 }}>
                 <h2 className="tab-title" style={{ marginBottom: 0 }}>WhatsApp Click-to-Chat outreach</h2>
                 <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <button 
+                    className="btn primary" 
+                    onClick={() => { 
+                      setShowWaImportModal(true); 
+                      setWaImportAnalysis(null); 
+                      setWaImportRawText(''); 
+                      setWaImportTab('sent'); 
+                      setWaImportStatus('Sent'); 
+                    }} 
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: 8, background: '#10b981', borderColor: '#10b981', fontWeight: 600 }}
+                  >
+                    <Upload size={16} /> Import Sent Numbers
+                  </button>
                   {selectedContactIds.length > 0 && (
                     <span style={{ fontSize: '14px', color: 'var(--color-text-secondary)' }}>
                       {selectedContactIds.length} selected
@@ -2806,7 +3406,14 @@ export default function App() {
             <div>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
                 <h2 className="tab-title">Master Contacts Database</h2>
-                <div style={{ display: 'flex', gap: 12 }}>
+                <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                  <button 
+                    className="btn primary" 
+                    onClick={() => { setShowMasterImportModal(true); setMasterImportAnalysis(null); setMasterImportError(''); }}
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: 8, background: '#6366f1', borderColor: '#6366f1' }}
+                  >
+                    <Upload size={16} /> Bulk Import / Update
+                  </button>
                   <button className="btn warning" onClick={() => selectTab('volunteers', true)} style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
                     <Users size={16} /> Manage Volunteers
                   </button>
@@ -3681,6 +4288,355 @@ export default function App() {
         </div>
       )}
 
+      {/* ==================== BULK IMPORT / UPDATE MASTER CONTACTS MODAL ==================== */}
+      {showMasterImportModal && (
+        <div className="modal-backdrop" onClick={() => { setShowMasterImportModal(false); setMasterImportAnalysis(null); setMasterImportError(''); }}>
+          <div className="modal" style={{ maxWidth: '840px', width: '92%', maxHeight: '90vh', display: 'flex', flexDirection: 'column' }} onClick={(e) => e.stopPropagation()}>
+            
+            {/* Modal Header */}
+            <div className="modal-header">
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <div style={{ background: 'rgba(99, 102, 241, 0.15)', padding: 8, borderRadius: 8, color: '#818cf8', display: 'flex' }}>
+                  <Database size={22} />
+                </div>
+                <div>
+                  <h3 className="drawer-title" style={{ margin: 0, fontSize: 18 }}>Bulk Import & Update Contacts</h3>
+                  <p style={{ margin: 0, fontSize: 12, color: 'var(--color-text-muted)' }}>
+                    Match contacts by <strong>AccCode</strong> and update available details without clearing empty fields
+                  </p>
+                </div>
+              </div>
+              <button className="close-btn" onClick={() => { setShowMasterImportModal(false); setMasterImportAnalysis(null); setMasterImportError(''); }}>
+                <X size={20} />
+              </button>
+            </div>
+
+            {/* Error Banner */}
+            {masterImportError && (
+              <div style={{ background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.3)', color: '#f87171', padding: '10px 14px', borderRadius: 8, fontSize: 13, display: 'flex', alignItems: 'center', gap: 8, margin: '10px 0' }}>
+                <AlertCircle size={16} style={{ flexShrink: 0 }} />
+                <span>{masterImportError}</span>
+              </div>
+            )}
+
+            {/* If No Analysis: Input & Upload Step */}
+            {!masterImportAnalysis ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 16, overflowY: 'auto', paddingRight: 4, marginTop: 10 }}>
+                
+                {/* Step 1: Template Download Banner */}
+                <div style={{ background: 'rgba(99, 102, 241, 0.08)', border: '1px solid rgba(99, 102, 241, 0.25)', borderRadius: 10, padding: 16 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
+                    <div>
+                      <h4 style={{ margin: '0 0 4px 0', fontSize: 14, color: 'var(--color-text-white)', fontWeight: 600 }}>
+                        📋 Step 1: Download Standard Template
+                      </h4>
+                      <p style={{ margin: 0, fontSize: 12, color: 'var(--color-text-secondary)', maxWidth: 480 }}>
+                        Download our pre-formatted template with AccCode, Name, Phone, Email, District, Area, Emirate, Volunteer, and Sentiment columns.
+                      </p>
+                    </div>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <button 
+                        type="button" 
+                        className="btn" 
+                        onClick={() => handleDownloadMasterTemplate('xlsx')}
+                        style={{ background: '#10b981', borderColor: '#10b981', color: '#fff', display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 600 }}
+                      >
+                        <Download size={14} /> Download Excel (.xlsx)
+                      </button>
+                      <button 
+                        type="button" 
+                        className="btn" 
+                        onClick={() => handleDownloadMasterTemplate('csv')}
+                        style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12 }}
+                      >
+                        <FileText size={14} /> Download CSV (.csv)
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Step 2: Upload or Paste Tabs */}
+                <div>
+                  <div style={{ display: 'flex', borderBottom: '1px solid var(--border-color)', marginBottom: 14 }}>
+                    <button 
+                      type="button"
+                      className="btn"
+                      style={{
+                        background: masterImportTab === 'file' ? 'var(--bg-card)' : 'transparent',
+                        border: '1px solid',
+                        borderColor: masterImportTab === 'file' ? 'var(--border-color)' : 'transparent',
+                        borderBottomColor: masterImportTab === 'file' ? 'var(--bg-modal)' : 'transparent',
+                        borderRadius: '8px 8px 0 0',
+                        padding: '8px 16px',
+                        color: masterImportTab === 'file' ? 'var(--color-text-white)' : 'var(--color-text-secondary)',
+                        fontWeight: 600
+                      }}
+                      onClick={() => { setMasterImportTab('file'); setMasterImportError(''); }}
+                    >
+                      📁 Upload Spreadsheet (.xlsx, .csv)
+                    </button>
+                    <button 
+                      type="button"
+                      className="btn"
+                      style={{
+                        background: masterImportTab === 'paste' ? 'var(--bg-card)' : 'transparent',
+                        border: '1px solid',
+                        borderColor: masterImportTab === 'paste' ? 'var(--border-color)' : 'transparent',
+                        borderBottomColor: masterImportTab === 'paste' ? 'var(--bg-modal)' : 'transparent',
+                        borderRadius: '8px 8px 0 0',
+                        padding: '8px 16px',
+                        color: masterImportTab === 'paste' ? 'var(--color-text-white)' : 'var(--color-text-secondary)',
+                        fontWeight: 600
+                      }}
+                      onClick={() => { setMasterImportTab('paste'); setMasterImportError(''); }}
+                    >
+                      📋 Paste Excel / CSV Table
+                    </button>
+                  </div>
+
+                  {masterImportTab === 'file' ? (
+                    <div style={{ 
+                      border: '2px dashed var(--border-color)', 
+                      borderRadius: 12, 
+                      padding: '36px 20px', 
+                      textAlign: 'center',
+                      background: 'rgba(255,255,255,0.01)',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'center',
+                      gap: 12
+                    }}>
+                      <div style={{ width: 48, height: 48, borderRadius: '50%', background: 'rgba(99, 102, 241, 0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#818cf8' }}>
+                        <Upload size={24} />
+                      </div>
+                      <div>
+                        <h5 style={{ margin: '0 0 4px 0', fontSize: 15, color: 'var(--color-text-white)' }}>
+                          {masterImportFileName ? `Selected: ${masterImportFileName}` : 'Choose an Excel or CSV file to import'}
+                        </h5>
+                        <p style={{ margin: 0, fontSize: 12, color: 'var(--color-text-secondary)' }}>
+                          Supports .xlsx, .xls, .csv files with headers
+                        </p>
+                      </div>
+                      <label className="btn primary" style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6, marginTop: 4 }}>
+                        <Upload size={14} /> Browse File
+                        <input 
+                          type="file" 
+                          accept=".xlsx,.xls,.csv,.txt" 
+                          style={{ display: 'none' }}
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (file) handleMasterFileSelect(file);
+                          }}
+                        />
+                      </label>
+                    </div>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                      <p style={{ margin: 0, fontSize: 12, color: 'var(--color-text-secondary)' }}>
+                        Copy cells directly from Excel or Google Sheets (including header row) and paste below:
+                      </p>
+                      <textarea 
+                        className="drawer-textarea"
+                        placeholder={"AccCode\tAccountName\tMobile Number\tEmail ID\tDistrict\tArea\nL190\tMuhammed Rashid\t971501234567\trashid@example.com\tKOZHIKODE\tCITY\nL191\tPriya Nair\t0509876543\tpriya@example.com\tERNAKULAM\tALUVA"}
+                        value={masterImportRawText}
+                        onChange={(e) => { setMasterImportRawText(e.target.value); if (masterImportError) setMasterImportError(''); }}
+                        style={{ height: '180px', fontFamily: 'monospace', fontSize: 12 }}
+                      />
+                      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+                        <button 
+                          type="button" 
+                          className="btn primary" 
+                          disabled={isAnalyzingMaster}
+                          onClick={handleAnalyzePastedMasterText}
+                          style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                        >
+                          {isAnalyzingMaster ? <RefreshCw size={14} className="spin" /> : <Search size={14} />}
+                          Analyze Pasted Table
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ) : (
+              /* Step 3: Analysis & Preview Results */
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 14, overflowY: 'auto', paddingRight: 4, maxHeight: '72vh' }}>
+                
+                {/* Summary Stat Cards */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10 }}>
+                  <div className="stat-card" style={{ padding: 12 }}>
+                    <div style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>Total In File</div>
+                    <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--color-text-white)' }}>{masterImportAnalysis.totalRawCount}</div>
+                  </div>
+                  <div className="stat-card" style={{ padding: 12 }}>
+                    <div style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>Matched & Changing</div>
+                    <div style={{ fontSize: 20, fontWeight: 700, color: '#10b981' }}>{masterImportAnalysis.hasChangesCount}</div>
+                  </div>
+                  <div className="stat-card" style={{ padding: 12 }}>
+                    <div style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>New Contacts</div>
+                    <div style={{ fontSize: 20, fontWeight: 700, color: '#6366f1' }}>{masterImportAnalysis.newRows.length}</div>
+                  </div>
+                  <div className="stat-card" style={{ padding: 12 }}>
+                    <div style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>Unchanged / Same</div>
+                    <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--color-text-muted)' }}>{masterImportAnalysis.unchangedCount}</div>
+                  </div>
+                </div>
+
+                {/* Options Bar */}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(255,255,255,0.02)', padding: '10px 14px', borderRadius: 8, border: '1px solid var(--border-color)' }}>
+                  <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer', color: 'var(--color-text-white)', fontWeight: 500 }}>
+                    <input 
+                      type="checkbox" 
+                      checked={masterInsertNew}
+                      onChange={(e) => setMasterInsertNew(e.target.checked)}
+                      style={{ width: 16, height: 16, accentColor: '#6366f1' }}
+                    />
+                    Insert as new contact if AccCode is not found in database ({masterImportAnalysis.newRows.length} new)
+                  </label>
+                  <div style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>
+                    <strong>{masterSelectedAccCodes.length}</strong> selected for import
+                  </div>
+                </div>
+
+                {/* Preview Table */}
+                <div style={{ border: '1px solid var(--border-color)', borderRadius: 8, overflow: 'hidden' }}>
+                  <div style={{ maxHeight: '300px', overflowY: 'auto' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, textAlign: 'left' }}>
+                      <thead style={{ background: 'var(--bg-card)', position: 'sticky', top: 0, zIndex: 1, borderBottom: '1px solid var(--border-color)' }}>
+                        <tr>
+                          <th style={{ padding: '8px 12px', width: 36 }}>
+                            <input 
+                              type="checkbox" 
+                              checked={masterSelectedAccCodes.length === masterImportAnalysis.allActionable.length && masterImportAnalysis.allActionable.length > 0}
+                              onChange={(e) => {
+                                if (e.target.checked) {
+                                  setMasterSelectedAccCodes(masterImportAnalysis.allActionable.map(r => r.accCode));
+                                } else {
+                                  setMasterSelectedAccCodes([]);
+                                }
+                              }}
+                              style={{ accentColor: '#6366f1' }}
+                            />
+                          </th>
+                          <th style={{ padding: '8px 12px' }}>AccCode</th>
+                          <th style={{ padding: '8px 12px' }}>Account Name</th>
+                          <th style={{ padding: '8px 12px' }}>Action</th>
+                          <th style={{ padding: '8px 12px' }}>Fields to Update / Insert</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {masterImportAnalysis.allActionable.map((item, idx) => {
+                          const isSelected = masterSelectedAccCodes.includes(item.accCode);
+                          return (
+                            <tr 
+                              key={item.accCode + '_' + idx}
+                              style={{ 
+                                borderBottom: '1px solid var(--border-color)', 
+                                background: isSelected ? 'rgba(99, 102, 241, 0.03)' : 'transparent',
+                                opacity: (!item.isNew || masterInsertNew) ? 1 : 0.4
+                              }}
+                            >
+                              <td style={{ padding: '8px 12px' }}>
+                                <input 
+                                  type="checkbox"
+                                  checked={isSelected}
+                                  onChange={(e) => {
+                                    if (e.target.checked) {
+                                      setMasterSelectedAccCodes(prev => [...prev, item.accCode]);
+                                    } else {
+                                      setMasterSelectedAccCodes(prev => prev.filter(code => code !== item.accCode));
+                                    }
+                                  }}
+                                  style={{ accentColor: '#6366f1' }}
+                                />
+                              </td>
+                              <td style={{ padding: '8px 12px', fontWeight: 600, color: 'var(--color-text-white)' }}>
+                                <span style={{ background: 'rgba(255,255,255,0.05)', padding: '2px 6px', borderRadius: 4, fontFamily: 'monospace' }}>
+                                  {item.accCode}
+                                </span>
+                              </td>
+                              <td style={{ padding: '8px 12px', color: 'var(--color-text-secondary)' }}>
+                                {item.name}
+                              </td>
+                              <td style={{ padding: '8px 12px' }}>
+                                {item.isNew ? (
+                                  <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 12, background: 'rgba(99, 102, 241, 0.15)', color: '#818cf8', fontWeight: 600 }}>
+                                    + New Contact
+                                  </span>
+                                ) : item.changes.length > 0 ? (
+                                  <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 12, background: 'rgba(16, 185, 129, 0.15)', color: '#10b981', fontWeight: 600 }}>
+                                    ✓ Update
+                                  </span>
+                                ) : (
+                                  <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 12, background: 'rgba(255, 255, 255, 0.05)', color: 'var(--color-text-muted)' }}>
+                                    Unchanged
+                                  </span>
+                                )}
+                              </td>
+                              <td style={{ padding: '8px 12px' }}>
+                                <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                                  {item.changes.map((ch, cidx) => (
+                                    <span 
+                                      key={cidx} 
+                                      style={{ 
+                                        fontSize: 10, 
+                                        padding: '2px 6px', 
+                                        borderRadius: 4, 
+                                        background: item.isNew ? 'rgba(99, 102, 241, 0.1)' : 'rgba(245, 158, 11, 0.1)', 
+                                        color: item.isNew ? '#818cf8' : '#fbbf24',
+                                        border: '1px solid rgba(255,255,255,0.05)'
+                                      }}
+                                      title={`${ch.field}: "${ch.oldVal}" -> "${ch.newVal}"`}
+                                    >
+                                      {ch.field}
+                                    </span>
+                                  ))}
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                {/* Action Buttons */}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 6 }}>
+                  <button 
+                    type="button" 
+                    className="btn" 
+                    onClick={() => { setMasterImportAnalysis(null); setMasterImportError(''); }}
+                  >
+                    ← Back to File / Upload
+                  </button>
+                  <div style={{ display: 'flex', gap: 10 }}>
+                    <button 
+                      type="button" 
+                      className="btn" 
+                      onClick={() => { setShowMasterImportModal(false); setMasterImportAnalysis(null); setMasterImportError(''); }}
+                    >
+                      Cancel
+                    </button>
+                    <button 
+                      type="button" 
+                      className="btn primary" 
+                      disabled={isExecutingMaster || masterSelectedAccCodes.length === 0}
+                      onClick={handleExecuteMasterImport}
+                      style={{ background: '#10b981', borderColor: '#10b981', display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                    >
+                      {isExecutingMaster ? <RefreshCw size={14} className="spin" /> : <CheckCircle size={14} />}
+                      {isExecutingMaster ? 'Importing...' : `Apply Updates (${masterSelectedAccCodes.length} contacts)`}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+          </div>
+        </div>
+      )}
+
       {/* ==================== ADD CONTACT MODAL ==================== */}
       {showAddModal && (
         <div className="modal-backdrop" onClick={() => setShowAddModal(false)}>
@@ -3822,6 +4778,368 @@ export default function App() {
             <div className="modal-footer" style={{ borderTop: '1px solid var(--border-color)', paddingTop: 12 }}>
               <button type="button" className="btn" onClick={() => setWaConfirmContact(null)}>Skip Log</button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ==================== WHATSAPP BULK NUMBERS IMPORT MODAL ==================== */}
+      {showWaImportModal && (
+        <div className="modal-backdrop" onClick={() => { setShowWaImportModal(false); setWaImportAnalysis(null); setWaImportRawText(''); setWaImportError(''); }}>
+          <div className="modal" style={{ maxWidth: '750px', width: '92%', maxHeight: '90vh', display: 'flex', flexDirection: 'column' }} onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3 className="drawer-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <Upload size={20} color="#10b981" /> Import Numbers from Bulk WhatsApp App
+              </h3>
+              <button className="close-btn" onClick={() => { setShowWaImportModal(false); setWaImportAnalysis(null); setWaImportRawText(''); setWaImportError(''); }}><X size={20} /></button>
+            </div>
+
+            {/* Modal Tabs */}
+            <div style={{ display: 'flex', borderBottom: '1px solid var(--border-color)', paddingBottom: '1px', marginBottom: 16 }}>
+              <button 
+                type="button"
+                className="btn" 
+                style={{ 
+                  background: waImportTab === 'sent' ? 'var(--bg-card)' : 'transparent',
+                  border: '1px solid',
+                  borderColor: waImportTab === 'sent' ? 'var(--border-color)' : 'transparent',
+                  borderBottomColor: waImportTab === 'sent' ? 'var(--bg-modal)' : 'transparent',
+                  borderRadius: '8px 8px 0 0',
+                  padding: '10px 20px',
+                  color: waImportTab === 'sent' ? 'var(--color-text-white)' : 'var(--color-text-secondary)',
+                  fontWeight: 600
+                }}
+                onClick={() => { setWaImportTab('sent'); setWaImportStatus('Sent'); setWaImportAnalysis(null); setWaImportError(''); }}
+              >
+                📥 Import Sent Numbers
+              </button>
+              <button 
+                type="button"
+                className="btn" 
+                style={{ 
+                  background: waImportTab === 'failed' ? 'var(--bg-card)' : 'transparent',
+                  border: '1px solid',
+                  borderColor: waImportTab === 'failed' ? 'var(--border-color)' : 'transparent',
+                  borderBottomColor: waImportTab === 'failed' ? 'var(--bg-modal)' : 'transparent',
+                  borderRadius: '8px 8px 0 0',
+                  padding: '10px 20px',
+                  color: waImportTab === 'failed' ? 'var(--color-text-white)' : 'var(--color-text-secondary)',
+                  fontWeight: 600
+                }}
+                onClick={() => { setWaImportTab('failed'); setWaImportStatus('Failed'); setWaImportAnalysis(null); setWaImportError(''); }}
+              >
+                ⚠️ Import Failed / No WhatsApp Numbers
+              </button>
+            </div>
+
+            {/* Modal Content */}
+            {!waImportAnalysis ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 14, overflowY: 'auto', paddingRight: 4 }}>
+                <p style={{ fontSize: 13, color: 'var(--color-text-secondary)', lineHeight: 1.5 }}>
+                  {waImportTab === 'sent' ? (
+                    "Copy and paste phone numbers you sent messages to from your bulk WhatsApp sender software (or copy an Excel column / delivery log). Numbers will be automatically matched to voters in your database."
+                  ) : (
+                    "Copy and paste numbers that failed, bounced, or don't have WhatsApp accounts from your bulk sender report. These contacts will be marked as 'Failed'."
+                  )}
+                </p>
+
+                {/* Inline Error Message */}
+                {waImportError && (
+                  <div style={{ 
+                    background: 'rgba(239, 68, 68, 0.1)', 
+                    border: '1px solid rgba(239, 68, 68, 0.3)', 
+                    color: '#f87171', 
+                    padding: '10px 14px', 
+                    borderRadius: 8, 
+                    fontSize: 13, 
+                    display: 'flex', 
+                    alignItems: 'center', 
+                    gap: 8 
+                  }}>
+                    <AlertCircle size={16} style={{ flexShrink: 0 }} />
+                    <span>{waImportError}</span>
+                  </div>
+                )}
+
+                {/* Status, Date and Sentiment controls */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12, background: 'rgba(255,255,255,0.02)', padding: 12, borderRadius: 8, border: '1px solid var(--border-color)' }}>
+                  <div>
+                    <label style={{ fontSize: 11, fontWeight: 600, color: 'var(--color-text-muted)', display: 'block', marginBottom: 4 }}>
+                      Set WhatsApp Status:
+                    </label>
+                    <select 
+                      className="filter-select"
+                      style={{ width: '100%' }}
+                      value={waImportStatus}
+                      onChange={(e) => setWaImportStatus(e.target.value)}
+                    >
+                      <option value="Sent">Sent</option>
+                      <option value="Delivered">Delivered</option>
+                      <option value="Failed">Failed / No WhatsApp</option>
+                      <option value="Pending">Pending</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 11, fontWeight: 600, color: 'var(--color-text-muted)', display: 'block', marginBottom: 4 }}>
+                      Sent Date:
+                    </label>
+                    <input 
+                      type="date"
+                      className="filter-select"
+                      style={{ width: '100%' }}
+                      value={waImportDate}
+                      onChange={(e) => setWaImportDate(e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 11, fontWeight: 600, color: 'var(--color-text-muted)', display: 'block', marginBottom: 4 }}>
+                      Optional Voter Sentiment:
+                    </label>
+                    <select 
+                      className="filter-select"
+                      style={{ width: '100%' }}
+                      value={waImportSentiment}
+                      onChange={(e) => setWaImportSentiment(e.target.value)}
+                    >
+                      <option value="">(Keep Existing Sentiment)</option>
+                      <option value="Strong Support (Panel)">🟢 Strong Support (Panel)</option>
+                      <option value="Leaning Support (Anil Kumar only)">🟡 Leaning Support (Anil Kumar only)</option>
+                      <option value="Undecided / Needs Follow-up">🟠 Undecided / Needs Follow-up</option>
+                      <option value="Opposed">🔴 Opposed</option>
+                      <option value="Unknown">Unknown / Uncontacted</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--color-text-primary)' }}>
+                    Paste Phone Numbers or Logs:
+                  </label>
+                  <label 
+                    className="btn" 
+                    style={{ 
+                      fontSize: 11, 
+                      padding: '4px 10px', 
+                      cursor: 'pointer', 
+                      display: 'inline-flex', 
+                      alignItems: 'center', 
+                      gap: 4 
+                    }}
+                  >
+                    <FileText size={12} /> Load from .txt / .csv file
+                    <input 
+                      type="file" 
+                      accept=".txt,.csv" 
+                      style={{ display: 'none' }}
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) {
+                          const reader = new FileReader();
+                          reader.onload = (event) => {
+                            setWaImportRawText(event.target?.result || '');
+                            setWaImportError('');
+                          };
+                          reader.readAsText(file);
+                        }
+                      }}
+                    />
+                  </label>
+                </div>
+
+                <textarea 
+                  className="drawer-textarea" 
+                  placeholder={"Paste numbers here (one per line, comma-separated, space-separated, or from Excel logs):\n\nExample:\n971506464369\n0504817685\n+971 50 632 4580\n050-646-7801\n506320994"}
+                  value={waImportRawText}
+                  onChange={(e) => {
+                    setWaImportRawText(e.target.value);
+                    if (waImportError) setWaImportError('');
+                  }}
+                  style={{ height: '200px', fontFamily: 'monospace', fontSize: 12 }}
+                />
+
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12, marginTop: 4 }}>
+                  <button 
+                    type="button"
+                    className="btn" 
+                    onClick={() => { setShowWaImportModal(false); setWaImportRawText(''); setWaImportAnalysis(null); setWaImportError(''); }}
+                  >
+                    Cancel
+                  </button>
+                  <button 
+                    type="button"
+                    className="btn primary" 
+                    disabled={isAnalyzingWa}
+                    style={{ background: '#10b981', borderColor: '#10b981', display: 'inline-flex', alignItems: 'center', gap: 6, opacity: isAnalyzingWa ? 0.7 : 1 }}
+                    onClick={handleAnalyzeWaImport}
+                  >
+                    {isAnalyzingWa ? <RefreshCw size={14} className="spin" /> : <Search size={14} />}
+                    {isAnalyzingWa ? 'Analyzing...' : 'Analyze & Match Numbers'}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              // Analysis Results view
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 14, overflowY: 'auto', paddingRight: 4, maxHeight: '72vh' }}>
+                
+                {/* Result Statistics */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10 }}>
+                  <div className="stat-card" style={{ padding: 12 }}>
+                    <div style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>Total Numbers</div>
+                    <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--color-text-white)' }}>{waImportAnalysis.numbersParsedCount}</div>
+                  </div>
+                  <div className="stat-card" style={{ padding: 12 }}>
+                    <div style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>Matched Contacts</div>
+                    <div style={{ fontSize: 20, fontWeight: 700, color: '#10b981' }}>{waImportAnalysis.matchedContacts.length}</div>
+                  </div>
+                  <div className="stat-card" style={{ padding: 12 }}>
+                    <div style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>Selected to Update</div>
+                    <div style={{ fontSize: 20, fontWeight: 700, color: '#6366f1' }}>{waSelectedMatchIds.length}</div>
+                  </div>
+                  <div className="stat-card" style={{ padding: 12 }}>
+                    <div style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>Unmatched</div>
+                    <div style={{ fontSize: 20, fontWeight: 700, color: (waImportAnalysis.unmatchedNumbers?.length || 0) > 0 ? '#f87171' : 'var(--color-text-muted)' }}>
+                      {waImportAnalysis.unmatchedNumbers?.length || 0}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Match Banner */}
+                {waImportAnalysis.matchedContacts.length === 0 ? (
+                  <div style={{ display: 'flex', gap: 8, background: 'rgba(239, 68, 68, 0.08)', border: '1px solid rgba(239, 68, 68, 0.25)', padding: 12, borderRadius: 8, fontSize: 13, color: '#f87171', alignItems: 'center' }}>
+                    <AlertCircle size={18} /> No matching phone numbers found in your database. Please check the pasted values.
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', gap: 8, background: 'rgba(16, 185, 129, 0.08)', border: '1px solid rgba(16, 185, 129, 0.25)', padding: 12, borderRadius: 8, fontSize: 13, color: '#34d399', alignItems: 'center' }}>
+                    <CheckCircle size={18} /> Ready to update <strong>{waSelectedMatchIds.length}</strong> matching contacts to WhatsApp status: <strong>{waImportStatus || 'Sent'}</strong> (Date: {waImportDate || 'Today'}).
+                  </div>
+                )}
+
+                {/* Unmatched list preview (if any) */}
+                {(waImportAnalysis.unmatchedNumbers?.length || 0) > 0 && (
+                  <div style={{ background: 'rgba(239, 68, 68, 0.04)', border: '1px solid rgba(239, 68, 68, 0.15)', borderRadius: 8, padding: 10 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                      <span style={{ fontSize: 12, fontWeight: 600, color: '#f87171' }}>
+                        Unmatched Numbers ({waImportAnalysis.unmatchedNumbers.length} not found in database):
+                      </span>
+                      <button 
+                        type="button"
+                        className="btn" 
+                        style={{ padding: '2px 8px', fontSize: 10 }}
+                        onClick={() => {
+                          if (navigator?.clipboard?.writeText) {
+                            navigator.clipboard.writeText(waImportAnalysis.unmatchedNumbers.join('\n')).catch(() => {});
+                          }
+                          alert('Copied unmatched numbers to clipboard.');
+                        }}
+                      >
+                        Copy Unmatched
+                      </button>
+                    </div>
+                    <div style={{ maxHeight: '70px', overflowY: 'auto', background: 'rgba(0,0,0,0.15)', padding: 8, borderRadius: 6, fontSize: 11, fontFamily: 'monospace', color: '#fca5a5' }}>
+                      {waImportAnalysis.unmatchedNumbers.join(', ')}
+                    </div>
+                  </div>
+                )}
+
+                {/* Matched Contacts List Table Preview */}
+                {waImportAnalysis.matchedContacts.length > 0 && (
+                  <div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                      <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--color-text-secondary)' }}>
+                        Matched Voters Preview ({waImportAnalysis.matchedContacts.length}):
+                      </span>
+                      <button 
+                        type="button"
+                        className="btn" 
+                        style={{ padding: '2px 8px', fontSize: 10 }}
+                        onClick={() => {
+                          if (waSelectedMatchIds.length === waImportAnalysis.matchedContacts.length) {
+                            setWaSelectedMatchIds([]);
+                          } else {
+                            setWaSelectedMatchIds(waImportAnalysis.matchedContacts.map(c => c.id));
+                          }
+                        }}
+                      >
+                        {waSelectedMatchIds.length === waImportAnalysis.matchedContacts.length ? 'Deselect All' : 'Select All'}
+                      </button>
+                    </div>
+                    <div style={{ maxHeight: '180px', overflowY: 'auto', border: '1px solid var(--border-color)', borderRadius: 8 }}>
+                      <table className="contacts-table" style={{ fontSize: 12 }}>
+                        <thead>
+                          <tr>
+                            <th style={{ width: 30 }}>
+                              <input 
+                                type="checkbox" 
+                                checked={waSelectedMatchIds.length > 0 && waSelectedMatchIds.length === waImportAnalysis.matchedContacts.length}
+                                onChange={(e) => {
+                                  if (e.target.checked) setWaSelectedMatchIds(waImportAnalysis.matchedContacts.map(c => c.id));
+                                  else setWaSelectedMatchIds([]);
+                                }}
+                              />
+                            </th>
+                            <th>S.No</th>
+                            <th>Code</th>
+                            <th>Voter Name</th>
+                            <th>Mobile Number</th>
+                            <th>Current Status</th>
+                            <th>New Status</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {waImportAnalysis.matchedContacts.map(c => (
+                            <tr key={c.id}>
+                              <td>
+                                <input 
+                                  type="checkbox" 
+                                  checked={waSelectedMatchIds.includes(c.id)}
+                                  onChange={() => {
+                                    setWaSelectedMatchIds(prev => 
+                                      prev.includes(c.id) ? prev.filter(id => id !== c.id) : [...prev, c.id]
+                                    );
+                                  }}
+                                />
+                              </td>
+                              <td>{c.s_no}</td>
+                              <td>{c.acc_code}</td>
+                              <td style={{ fontWeight: 600, color: 'var(--color-text-white)' }}>{c.account_name}</td>
+                              <td>{c.mobile_number}</td>
+                              <td>
+                                <span className={`status-badge ${(c.whatsapp_status || 'pending').toLowerCase()}`}>
+                                  {c.whatsapp_status || 'Pending'}
+                                </span>
+                              </td>
+                              <td>
+                                <span className={`status-badge ${(waImportStatus || 'Sent').toLowerCase()}`} style={{ fontWeight: 700 }}>
+                                  → {waImportStatus || 'Sent'}
+                                </span>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12, marginTop: 8 }}>
+                  <button 
+                    type="button" 
+                    className="btn" 
+                    onClick={() => { setWaImportAnalysis(null); setWaImportError(''); }}
+                  >
+                    ← Back to Paste
+                  </button>
+                  <button 
+                    type="button"
+                    className="btn success" 
+                    disabled={waSelectedMatchIds.length === 0}
+                    style={{ background: '#10b981', borderColor: '#10b981' }}
+                    onClick={handleExecuteWaImport}
+                  >
+                    ✓ Apply Updates to Database ({waSelectedMatchIds.length})
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}

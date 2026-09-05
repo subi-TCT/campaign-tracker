@@ -617,6 +617,162 @@ app.post('/api/contacts/bulk-assign', async (req, res) => {
   }
 });
 
+// POST bulk import / update contacts matching by acc_code
+app.post('/api/contacts/bulk-import', async (req, res) => {
+  const { contacts: incomingContacts, insertNew = true } = req.body;
+  if (!Array.isArray(incomingContacts) || incomingContacts.length === 0) {
+    return res.status(400).json({ error: 'No contacts provided in array' });
+  }
+
+  try {
+    // 1. Fetch existing contacts to match by acc_code in-memory
+    const existingList = await query(`
+      SELECT id, s_no, acc_code, account_name, mobile_number, email_id,
+             district, area, emirate, assigned_to, member_reaction, notes, account_status
+      FROM contacts
+    `);
+
+    const existingMap = new Map();
+    for (const c of existingList) {
+      if (c.acc_code) {
+        existingMap.set(String(c.acc_code).trim().toUpperCase(), c);
+      }
+    }
+
+    let updatedCount = 0;
+    let insertedCount = 0;
+    let unchangedCount = 0;
+    let skippedNoCode = 0;
+
+    for (let i = 0; i < incomingContacts.length; i++) {
+      const row = incomingContacts[i];
+      const accCodeRaw = row.acc_code !== undefined && row.acc_code !== null ? String(row.acc_code).trim().replace(/\.0$/, '') : '';
+      if (!accCodeRaw) {
+        skippedNoCode++;
+        continue;
+      }
+
+      const match = existingMap.get(accCodeRaw.toUpperCase());
+
+      // Format mobile if provided
+      let formattedMobile = undefined;
+      if (row.mobile_number !== undefined && row.mobile_number !== null) {
+        const rawMob = String(row.mobile_number).trim();
+        if (rawMob) {
+          let cleaned = rawMob.replace(/\D/g, '');
+          if (cleaned.startsWith('00971')) cleaned = '971' + cleaned.substring(5);
+          else if (cleaned.startsWith('05') && cleaned.length === 10) cleaned = '971' + cleaned.substring(1);
+          else if (cleaned.startsWith('5') && cleaned.length === 9) cleaned = '971' + cleaned;
+          formattedMobile = cleaned;
+        }
+      }
+
+      if (match) {
+        // Build updates for non-empty provided fields
+        const updates = [];
+        const params = [];
+
+        const checkAndUpdate = (colName, incomingVal, currentVal) => {
+          if (incomingVal !== undefined && incomingVal !== null) {
+            const strVal = String(incomingVal).trim();
+            if (strVal && strVal !== String(currentVal || '').trim()) {
+              updates.push(`${colName} = ?`);
+              params.push(strVal);
+            }
+          }
+        };
+
+        checkAndUpdate('account_name', row.account_name, match.account_name);
+        if (formattedMobile && formattedMobile !== (match.mobile_number || '')) {
+          updates.push('mobile_number = ?');
+          params.push(formattedMobile);
+        }
+        checkAndUpdate('email_id', row.email_id, match.email_id);
+        checkAndUpdate('district', row.district, match.district);
+        checkAndUpdate('area', row.area, match.area);
+        checkAndUpdate('emirate', row.emirate, match.emirate);
+        checkAndUpdate('assigned_to', row.assigned_to, match.assigned_to);
+        checkAndUpdate('member_reaction', row.member_reaction, match.member_reaction);
+        checkAndUpdate('notes', row.notes, match.notes);
+        checkAndUpdate('account_status', row.account_status, match.account_status);
+
+        if (row.s_no !== undefined && row.s_no !== null && Number(row.s_no) > 0) {
+          const snoNum = parseInt(row.s_no, 10);
+          if (snoNum !== match.s_no) {
+            updates.push('s_no = ?');
+            params.push(snoNum);
+          }
+        }
+
+        if (updates.length > 0) {
+          params.push(match.id);
+          const updateSql = `UPDATE contacts SET ${updates.join(', ')} WHERE id = ?`;
+          await run(updateSql, params);
+          updatedCount++;
+        } else {
+          unchangedCount++;
+        }
+      } else if (insertNew) {
+        // Insert new contact
+        const name = row.account_name ? String(row.account_name).trim() : 'Unknown';
+        const mobile = formattedMobile || '';
+        const email = row.email_id ? String(row.email_id).trim() : '';
+        const district = row.district ? String(row.district).trim() : '';
+        const area = row.area ? String(row.area).trim() : '';
+        const emirate = row.emirate ? String(row.emirate).trim() : '';
+        const assigned_to = row.assigned_to ? String(row.assigned_to).trim() : 'Unassigned';
+        const reaction = row.member_reaction ? String(row.member_reaction).trim() : 'Unknown';
+        const notes = row.notes ? String(row.notes).trim() : '';
+        const status = row.account_status ? String(row.account_status).trim() : 'Active';
+        const sNo = row.s_no ? parseInt(row.s_no, 10) || 0 : 0;
+
+        const insertSql = `
+          INSERT INTO contacts (
+            s_no, acc_code, account_name, mobile_number, email_id, 
+            district, area, emirate, assigned_to, member_reaction, notes, account_status,
+            email_status, whatsapp_status, sms_status, call_status, exit_poll_status
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Pending', 'Pending', 'Pending', 'Not Called', 'Pending')
+        `;
+        const insertParams = [
+          sNo, accCodeRaw, name, mobile, email,
+          district, area, emirate, assigned_to, reaction, notes, status
+        ];
+        const resInsert = await run(insertSql, insertParams);
+        insertedCount++;
+
+        // Cache in existingMap
+        existingMap.set(accCodeRaw.toUpperCase(), {
+          id: resInsert.id,
+          acc_code: accCodeRaw,
+          account_name: name,
+          mobile_number: mobile,
+          email_id: email,
+          district, area, emirate, assigned_to, member_reaction: reaction, notes, account_status: status, s_no: sNo
+        });
+      } else {
+        unchangedCount++;
+      }
+    }
+
+    // Reset Postgres sequence if new contacts were inserted
+    if (isPostgres && insertedCount > 0) {
+      await pgPool.query("SELECT setval(pg_get_serial_sequence('contacts', 'id'), COALESCE(max(id), 1)) FROM contacts");
+    }
+
+    res.json({
+      success: true,
+      total: incomingContacts.length,
+      updated: updatedCount,
+      inserted: insertedCount,
+      unchanged: unchangedCount,
+      skippedNoCode
+    });
+  } catch (error) {
+    console.error('Error in bulk contacts import:', error);
+    res.status(500).json({ error: 'Database error: ' + error.message });
+  }
+});
+
 // GET all contacts
 app.get('/api/contacts', async (req, res) => {
   try {
@@ -766,20 +922,38 @@ app.post('/api/contacts/bulk-email', async (req, res) => {
 
 // POST bulk update whatsapp status
 app.post('/api/contacts/bulk-whatsapp', async (req, res) => {
-  const { ids, status, date } = req.body;
+  const { ids, status, date, sentiment } = req.body;
   if (!Array.isArray(ids) || ids.length === 0) {
     return res.status(400).json({ error: 'Invalid ids array' });
   }
 
   try {
-    const placeholders = ids.map(() => '?').join(',');
-    const sql = `
-      UPDATE contacts 
-      SET whatsapp_status = ?, whatsapp_sent_date = ? 
-      WHERE id IN (${placeholders})
-    `;
-    const result = await run(sql, [status, date, ...ids]);
-    res.json({ success: true, updated: result.changes });
+    const batchSize = 500;
+    let totalUpdated = 0;
+    for (let i = 0; i < ids.length; i += batchSize) {
+      const batch = ids.slice(i, i + batchSize);
+      const placeholders = batch.map(() => '?').join(',');
+      let sql;
+      let params;
+      if (sentiment && sentiment.trim() && sentiment !== 'Keep Current' && sentiment !== 'All') {
+        sql = `
+          UPDATE contacts 
+          SET whatsapp_status = ?, whatsapp_sent_date = ?, member_reaction = ? 
+          WHERE id IN (${placeholders})
+        `;
+        params = [status, date, sentiment, ...batch];
+      } else {
+        sql = `
+          UPDATE contacts 
+          SET whatsapp_status = ?, whatsapp_sent_date = ? 
+          WHERE id IN (${placeholders})
+        `;
+        params = [status, date, ...batch];
+      }
+      const result = await run(sql, params);
+      totalUpdated += (result.changes || 0);
+    }
+    res.json({ success: true, updated: totalUpdated });
   } catch (error) {
     console.error('Error in bulk whatsapp update:', error);
     res.status(500).json({ error: 'Database error' });

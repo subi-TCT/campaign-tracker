@@ -1466,6 +1466,7 @@ app.get('/api/stats', async (req, res) => {
         sent: 0,
         delivered: 0,
         failed: 0,
+        totalSent: 0,
         sentToday: parseInt(whatsappTodayRow.count || 0, 10)
       },
       sms: {
@@ -1485,6 +1486,8 @@ app.get('/api/stats', async (req, res) => {
         outOfCountry: 0,
         switchedOff: 0,
         reminderRequest: 0,
+        totalSent: 0,
+        totalCalled: 0,
         calledToday: parseInt(callTodayRow.count || 0, 10)
       },
       reactions: {
@@ -1546,6 +1549,7 @@ app.get('/api/stats', async (req, res) => {
       else if (status === 'delivered') stats.whatsapp.delivered = count;
       else if (status === 'failed') stats.whatsapp.failed = count;
     });
+    stats.whatsapp.totalSent = stats.whatsapp.sent + stats.whatsapp.delivered;
 
     smsStatuses.forEach(r => {
       const status = (r.sms_status || '').toLowerCase();
@@ -1569,6 +1573,8 @@ app.get('/api/stats', async (req, res) => {
       else if (status === 'switched off') stats.call.switchedOff = count;
       else if (status === 'reminder request') stats.call.reminderRequest = count;
     });
+    stats.call.totalSent = Math.max(0, stats.totalContacts - stats.call.notCalled);
+    stats.call.totalCalled = stats.call.totalSent;
 
     reactionRows.forEach(r => {
       const reaction = (r.member_reaction || '').trim();

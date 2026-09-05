@@ -2568,12 +2568,19 @@ export default function App() {
                   <div className="stat-value">{stats.call.calledToday}</div>
                   <div className="stat-desc">Outreach calls completed today</div>
                 </div>
+                <div className="stat-card warning">
+                  <div className="stat-header"><span>Total Sent / Calls Made</span></div>
+                  <div className="stat-value" style={{ color: '#fbbf24' }}>
+                    {stats.call?.totalSent !== undefined ? stats.call.totalSent : (stats.totalContacts - stats.call.notCalled)}
+                  </div>
+                  <div className="stat-desc">Cumulative outreach calls completed</div>
+                </div>
                 <div className="stat-card success">
                   <div className="stat-header"><span>Connected / Support</span></div>
                   <div className="stat-value">{stats.call.connected}</div>
                   <div className="stat-desc">Voters spoke & support confirmed</div>
                 </div>
-                <div className="stat-card warning">
+                <div className="stat-card">
                   <div className="stat-header"><span>No Connect / Retry</span></div>
                   <div className="stat-value">{(Number(stats.call.busy) || 0) + (Number(stats.call.noAnswer) || 0) + (Number(stats.call.noResponse) || 0) + (Number(stats.call.switchedOff) || 0) + (Number(stats.call.reminderRequest) || 0)}</div>
                   <div className="stat-desc">Busy, No Ans, Off, No Response, or Reminders</div>
@@ -2796,6 +2803,13 @@ export default function App() {
                   <div className="stat-desc">WhatsApp messages sent today</div>
                 </div>
                 <div className="stat-card success">
+                  <div className="stat-header"><span>Total Sent</span></div>
+                  <div className="stat-value" style={{ color: '#10b981' }}>
+                    {stats.whatsapp.totalSent !== undefined ? stats.whatsapp.totalSent : ((Number(stats.whatsapp.sent) || 0) + (Number(stats.whatsapp.delivered) || 0))}
+                  </div>
+                  <div className="stat-desc">Cumulative messages dispatched</div>
+                </div>
+                <div className="stat-card">
                   <div className="stat-header"><span>Confirmed Delivered</span></div>
                   <div className="stat-value" style={{ color: '#34d399' }}>{stats.whatsapp.delivered}</div>
                   <div className="stat-desc">Messages delivered successfully</div>

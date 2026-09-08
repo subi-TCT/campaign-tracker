@@ -5,11 +5,12 @@ import {
   Plus, FileText, Settings, HelpCircle, Save, ExternalLink,
   Sun, Moon, Upload, AlertCircle, X, Vote, Award, BarChart2, Menu,
   Smartphone, Send, Inbox, RefreshCw, Database, Download, MapPin, Copy,
-  Image as ImageIcon
+  Image as ImageIcon, Droplet, Cake, Calendar, Heart
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001/api';
+const PHOTO_BASE = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001/api').replace(/\/api\/?$/, '') + '/photos';
 
 // Pre-election Sentiment Legend Configurations
 const SENTIMENT_META = {
@@ -46,7 +47,9 @@ const DEFAULT_TEMPLATES = {
   whatsapp: "Dear {Name},\n\nKindly support 🟢 *Anil Kumar K G Pillai* (Managing Committee Candidate - Serial No. 3) & our 7-candidate panel 🗳️ for the Managing Committee Selection on Sep 6th, 2026 (8 AM onwards). Your valuable vote is critical for our success. 🙏\n\nThank you,\nCampaign Team",
   email: "Dear {Name},\n\nWe hope this email finds you well.\n\nWe kindly request your valuable vote and support for Anil Kumar K G Pillai (Managing Committee Candidate, Serial No. 3) and our 7-candidate panel in the upcoming Managing Committee Selection on Sunday, September 6, 2026.\n\nYour support will ensure strong leadership and progress.\n\nBest regards,\nCampaign Committee",
   callScript: "Hello {Name}, calling from the election committee. We request your support for Managing Committee candidate Anil Kumar K G Pillai (Serial No. 3) and our 7-candidate panel in the selection on September 6th at 8:00 AM. May we count on your support?",
-  sms: "Dear {Name}, please support Anil Kumar K G Pillai (Serial No. 3) & our 7-candidate panel for Managing Committee Selection on Sep 6th. Your vote is vital. Thank you!"
+  sms: "Dear {Name}, please support Anil Kumar K G Pillai (Serial No. 3) & our 7-candidate panel for Managing Committee Selection on Sep 6th. Your vote is vital. Thank you!",
+  birthday: "Dear {Name},\n\nOn behalf of Indian Association Sharjah, we wish you a very Happy Birthday! 🎂✨ May this year bring you boundless happiness, enduring vitality, and great success in all your endeavors.\n\nWarm regards,\nIndian Association Sharjah",
+  bloodRequest: "🚨 URGENT BLOOD DONATION REQUEST\n\nDear {Name},\n\nAn urgent blood donation (Blood Group: {BloodGroup}) is required for a patient in emergency care.\n\n🏥 Hospital: {Hospital}\n👤 Patient: {Patient}\n🩸 Blood Group: {BloodGroup}\n\nIf you or someone you know can donate, please contact immediately. Your timely support can save a life! 🙏"
 };
 
 export default function App() {
@@ -78,6 +81,25 @@ export default function App() {
   const [qualityFilter, setQualityFilter] = useState('All');
   const [sentimentFilter, setSentimentFilter] = useState('All');
   const [statusFilter, setStatusFilter] = useState('Active');
+  const [bloodGroupFilter, setBloodGroupFilter] = useState('All');
+
+  // Birthday Automation states
+  const [todayBirthdays, setTodayBirthdays] = useState({ totalToday: 0, members: [] });
+  const [upcomingBirthdays, setUpcomingBirthdays] = useState([]);
+  const [isSendingBirthdayEmail, setIsSendingBirthdayEmail] = useState(false);
+  const [birthdayActionMsg, setBirthdayActionMsg] = useState('');
+
+  // Blood Bank Directory states
+  const [bloodBankSummary, setBloodBankSummary] = useState(null);
+  const [bloodBankSearch, setBloodBankSearch] = useState('');
+  const [bloodBankGroupFilter, setBloodBankGroupFilter] = useState('All');
+  const [bloodBankDistrictFilter, setBloodBankDistrictFilter] = useState('All');
+  const [showEmergencyModal, setShowEmergencyModal] = useState(false);
+  const [emergencyTargetContact, setEmergencyTargetContact] = useState(null);
+  const [emergencyHospital, setEmergencyHospital] = useState('');
+  const [emergencyPatient, setEmergencyPatient] = useState('');
+  const [emergencyBloodGroup, setEmergencyBloodGroup] = useState('O+');
+  const [emergencyContactPhone, setEmergencyContactPhone] = useState('');
 
   // Textbee SMS Gateway states
   const [textbeeConfig, setTextbeeConfig] = useState({ isConfigured: false, hasDeviceId: false });
@@ -237,6 +259,12 @@ export default function App() {
 
   // Get Today's Date String
   const getTodayString = () => new Date().toISOString().split('T')[0];
+  const getTodayDayMonth = () => {
+    const now = new Date();
+    const day = String(now.getDate()).padStart(2, '0');
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    return `${day}/${month}`;
+  };
 
   // Theme Toggling Effect
   useEffect(() => {
@@ -282,11 +310,81 @@ export default function App() {
 
       // Query incoming SMS messages
       fetchIncomingSms();
+
+      // Query today's birthdays and blood bank summary
+      fetchBirthdays();
+      fetchBloodBank();
     } catch (err) {
       console.error(err);
       setError('Could not connect to the local backend. Please ensure the backend server is running on http://localhost:3001.');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchBirthdays = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/birthdays/today`);
+      if (res.ok) {
+        const data = await res.json();
+        setTodayBirthdays(data);
+      }
+      const upRes = await fetch(`${API_BASE}/birthdays/upcoming`);
+      if (upRes.ok) {
+        const upData = await upRes.json();
+        setUpcomingBirthdays(upData);
+      }
+    } catch (err) {
+      console.error('Error fetching birthdays:', err);
+    }
+  };
+
+  const fetchBloodBank = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/blood-bank/summary`);
+      if (res.ok) {
+        const data = await res.json();
+        setBloodBankSummary(data);
+      }
+    } catch (err) {
+      console.error('Error fetching blood bank summary:', err);
+    }
+  };
+
+  const handleSendTodayBirthdays = async () => {
+    setIsSendingBirthdayEmail(true);
+    setBirthdayActionMsg('');
+    try {
+      const res = await fetch(`${API_BASE}/birthdays/send-today`, { method: 'POST' });
+      const data = await res.json();
+      if (res.ok) {
+        setBirthdayActionMsg(`🎉 Dispatched! Sent: ${data.sent || 0} greetings, Failed: ${data.failed || 0}`);
+        fetchBirthdays();
+      } else {
+        setBirthdayActionMsg(`⚠️ ${data.error || 'Failed to dispatch emails.'}`);
+      }
+    } catch (err) {
+      setBirthdayActionMsg(`⚠️ Error: ${err.message}`);
+    } finally {
+      setIsSendingBirthdayEmail(false);
+    }
+  };
+
+  const handleSendSingleBirthday = async (contactId, contactName) => {
+    setIsSendingBirthdayEmail(true);
+    try {
+      const res = await fetch(`${API_BASE}/birthdays/send-single/${contactId}`, { method: 'POST' });
+      const data = await res.json();
+      if (res.ok) {
+        alert(`🎂 Birthday email greeting successfully delivered to ${contactName}!`);
+        fetchBirthdays();
+      } else {
+        alert(`Failed to send email: ${data.error || 'Check SMTP configuration.'}`);
+      }
+    } catch (err) {
+      alert(`Error sending email: ${err.message}`);
+    } finally {
+      setIsSendingBirthdayEmail(false);
     }
   };
 
@@ -1728,7 +1826,11 @@ export default function App() {
         account_status: selectedContact.account_status,
         assigned_to: selectedContact.assigned_to,
         area: selectedContact.area,
-        district: selectedContact.district
+        district: selectedContact.district,
+        date_of_birth: selectedContact.date_of_birth,
+        date_of_join: selectedContact.date_of_join,
+        blood_group: selectedContact.blood_group,
+        photo_filename: selectedContact.photo_filename
       });
     } catch (err) {
       console.error("Error saving drawer details:", err);
@@ -1758,7 +1860,10 @@ export default function App() {
         (c.account_name && c.account_name.toLowerCase().includes(q)) ||
         (c.acc_code && c.acc_code.toLowerCase().includes(q)) ||
         (c.mobile_number && c.mobile_number.includes(q)) ||
-        (c.email_id && c.email_id.toLowerCase().includes(q))
+        (c.email_id && c.email_id.toLowerCase().includes(q)) ||
+        (c.blood_group && c.blood_group.toLowerCase().includes(q)) ||
+        (c.date_of_birth && c.date_of_birth.includes(q)) ||
+        (c.date_of_join && c.date_of_join.includes(q))
       );
     }
 
@@ -1801,6 +1906,11 @@ export default function App() {
     // District Filter (Master Database tab only)
     if (activeTab === 'database' && districtFilter !== 'All') {
       list = list.filter(c => c.district === districtFilter);
+    }
+
+    // Blood Group Filter (Master Database tab only)
+    if (activeTab === 'database' && bloodGroupFilter !== 'All') {
+      list = list.filter(c => (c.blood_group || 'Unknown') === bloodGroupFilter);
     }
 
     // Volunteer Filter (Call Center, WhatsApp & SMS tabs)
@@ -1998,6 +2108,12 @@ export default function App() {
               </button>
             </li>
             <li className="nav-item">
+              <button className={`nav-link ${activeTab === 'bloodbank' ? 'active' : ''}`} onClick={() => selectTab('bloodbank', true)}>
+                <Droplet size={18} color="#ef4444" />
+                Blood Bank Directory
+              </button>
+            </li>
+            <li className="nav-item">
               <button className={`nav-link ${activeTab === 'volunteers' ? 'active' : ''}`} onClick={() => selectTab('volunteers', true)}>
                 <Users size={18} />
                 Campaign Volunteers
@@ -2060,6 +2176,111 @@ export default function App() {
           {activeTab === 'dashboard' && (
             <div>
               <h2 className="tab-title">Outreach & Progress Dashboard</h2>
+              
+              {/* Today's Celebrants & Birthday Automation Widget */}
+              {todayBirthdays && todayBirthdays.totalToday > 0 && (
+                <div className="birthday-widget">
+                  <div className="birthday-widget-header">
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <span style={{ fontSize: 28 }}>🎂</span>
+                      <div>
+                        <h3 style={{ margin: 0, fontSize: 18, color: '#fff', fontWeight: 700 }}>
+                          Today's Celebrants ({todayBirthdays.totalToday} Member{todayBirthdays.totalToday > 1 ? 's' : ''})
+                        </h3>
+                        <p style={{ margin: 0, fontSize: 12, color: 'var(--color-text-secondary)' }}>
+                          Automated birthday email greetings active • {todayBirthdays.sentCount} sent, {todayBirthdays.pendingCount} pending delivery
+                        </p>
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      {birthdayActionMsg && (
+                        <span style={{ fontSize: 12, fontWeight: 600, color: '#10b981' }}>{birthdayActionMsg}</span>
+                      )}
+                      <button 
+                        className="btn primary"
+                        disabled={isSendingBirthdayEmail || todayBirthdays.pendingCount === 0}
+                        onClick={handleSendTodayBirthdays}
+                        style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: 'linear-gradient(135deg, #ec4899, #8b5cf6)', borderColor: 'transparent' }}
+                      >
+                        <Send size={15} /> {isSendingBirthdayEmail ? 'Dispatching...' : `Send Wishes to All (${todayBirthdays.pendingCount})`}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="birthday-grid">
+                    {todayBirthdays.members.map(member => (
+                      <div key={member.id} className="birthday-card">
+                        <div style={{ position: 'relative' }}>
+                          {member.photo_filename ? (
+                            <img 
+                              src={`${PHOTO_BASE}/${encodeURIComponent(member.photo_filename)}`}
+                              alt={member.account_name}
+                              className="member-avatar-img"
+                              style={{ width: 46, height: 46, minWidth: 46 }}
+                              onError={(e) => { e.target.style.display = 'none'; if (e.target.nextSibling) e.target.nextSibling.style.display = 'flex'; }}
+                            />
+                          ) : null}
+                          <div 
+                            className="member-avatar-fallback"
+                            style={{ width: 46, height: 46, minWidth: 46, fontSize: 16, display: member.photo_filename ? 'none' : 'flex' }}
+                          >
+                            {member.account_name.substring(0, 2)}
+                          </div>
+                          <span style={{ position: 'absolute', bottom: -4, right: -4, fontSize: 14 }}>🎉</span>
+                        </div>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontWeight: 700, fontSize: 14, color: '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                            {member.account_name}
+                          </div>
+                          <div style={{ fontSize: 11, color: 'var(--color-text-secondary)', display: 'flex', alignItems: 'center', gap: 6, marginTop: 2 }}>
+                            <span style={{ fontWeight: 600, color: '#a855f7' }}>{member.acc_code}</span>
+                            <span>•</span>
+                            <span>Born: {member.date_of_birth}</span>
+                            {member.blood_group && member.blood_group !== 'Unknown' && (
+                              <>
+                                <span>•</span>
+                                <span className={`badge-blood ${member.blood_group.includes('-') ? 'neg' : 'pos'}`} style={{ fontSize: 10, padding: '1px 5px' }}>
+                                  {member.blood_group}
+                                </span>
+                              </>
+                            )}
+                          </div>
+                          <div style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 6 }}>
+                            {member.birthdaySentThisYear ? (
+                              <span style={{ fontSize: 11, color: '#10b981', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                                <CheckCircle size={12} /> Email Delivered
+                              </span>
+                            ) : member.hasEmail ? (
+                              <button
+                                className="btn"
+                                style={{ padding: '2px 8px', fontSize: 11, height: 'auto', background: 'rgba(99, 102, 241, 0.2)', borderColor: '#6366f1', color: '#c7d2fe' }}
+                                onClick={() => handleSendSingleBirthday(member.id, member.account_name)}
+                                disabled={isSendingBirthdayEmail}
+                              >
+                                <Send size={11} style={{ marginRight: 4 }} /> Send Greeting
+                              </button>
+                            ) : (
+                              <span style={{ fontSize: 11, color: 'var(--color-text-muted)', fontStyle: 'italic' }}>No email address</span>
+                            )}
+                            {member.mobile_number && (
+                              <a 
+                                href={`https://wa.me/${member.mobile_number}?text=${encodeURIComponent(`Dear ${member.account_name}, wishing you a very Happy Birthday! Warm regards from Indian Association Sharjah.`)}`}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="action-btn"
+                                title="WhatsApp Birthday Wish"
+                                style={{ padding: '2px 6px', color: '#10b981' }}
+                              >
+                                <MessageSquare size={13} />
+                              </a>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
               
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px', marginBottom: '24px' }}>
                 {/* Daily Email Target Tracker */}
@@ -4141,6 +4362,22 @@ export default function App() {
                       <option key={dist} value={dist}>{dist}</option>
                     ))}
                   </select>
+                  <select 
+                    className="filter-select" 
+                    value={bloodGroupFilter} 
+                    onChange={(e) => { setBloodGroupFilter(e.target.value); setCurrentPage(1); }}
+                  >
+                    <option value="All">All Blood Groups</option>
+                    <option value="O+">O+ (Common)</option>
+                    <option value="A+">A+</option>
+                    <option value="B+">B+</option>
+                    <option value="AB+">AB+</option>
+                    <option value="O-">O- (Universal Donor)</option>
+                    <option value="A-">A- (Rare)</option>
+                    <option value="B-">B- (Rare)</option>
+                    <option value="AB-">AB- (Rare)</option>
+                    <option value="Unknown">Unknown / Unregistered</option>
+                  </select>
                 </div>
               </div>
 
@@ -4158,14 +4395,17 @@ export default function App() {
                       </th>
                       <th>S.No</th>
                       <th>Code</th>
-                      <th>Account Name</th>
+                      <th>Member Profile</th>
+                      <th>Blood Group</th>
+                      <th>DOB</th>
+                      <th>DOJ</th>
                       <th>District</th>
                       <th>Area</th>
                       <th>Mobile Number</th>
                       <th>Email ID</th>
                       <th>Sentiment</th>
-                      <th>Email Status</th>
-                      <th>Call Status</th>
+                      <th>Email</th>
+                      <th>Call</th>
                       <th>WhatsApp</th>
                       <th>SMS</th>
                       <th style={{ textAlign: 'right' }}>Actions</th>
@@ -4183,13 +4423,44 @@ export default function App() {
                             />
                           </td>
                           <td>{contact.s_no}</td>
-                          <td>{contact.acc_code}</td>
-                          <td style={{ fontWeight: 600, color: 'var(--color-text-white)' }}>
-                            {contact.account_name}
-                            {contact.account_status === 'Inactive' && (
-                              <span className="status-badge failed" style={{ marginLeft: 8, fontSize: 10, padding: '2px 6px', textTransform: 'uppercase' }}>Inactive</span>
+                          <td><span style={{ fontWeight: 700, color: '#a855f7' }}>{contact.acc_code}</span></td>
+                          <td>
+                            <div className="avatar-cell">
+                              {contact.photo_filename ? (
+                                <img 
+                                  src={`${PHOTO_BASE}/${encodeURIComponent(contact.photo_filename)}`}
+                                  alt={contact.account_name}
+                                  className="member-avatar-img"
+                                  onError={(e) => { e.target.style.display = 'none'; if (e.target.nextSibling) e.target.nextSibling.style.display = 'flex'; }}
+                                />
+                              ) : null}
+                              <div 
+                                className="member-avatar-fallback"
+                                style={{ display: contact.photo_filename ? 'none' : 'flex' }}
+                              >
+                                {contact.account_name.substring(0, 2)}
+                              </div>
+                              <div>
+                                <div style={{ fontWeight: 600, color: 'var(--color-text-white)' }}>
+                                  {contact.account_name}
+                                  {contact.account_status === 'Inactive' && (
+                                    <span className="status-badge failed" style={{ marginLeft: 8, fontSize: 10, padding: '2px 6px', textTransform: 'uppercase' }}>Inactive</span>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          </td>
+                          <td>
+                            {contact.blood_group && contact.blood_group !== 'Unknown' ? (
+                              <span className={`badge-blood ${contact.blood_group.includes('-') ? 'neg' : 'pos'}`}>
+                                <Droplet size={11} /> {contact.blood_group}
+                              </span>
+                            ) : (
+                              <span className="badge-blood unknown">Unknown</span>
                             )}
                           </td>
+                          <td style={{ fontSize: 12, whiteSpace: 'nowrap' }}>{contact.date_of_birth || '—'}</td>
+                          <td style={{ fontSize: 12, whiteSpace: 'nowrap' }}>{contact.date_of_join || '—'}</td>
                           <td>{contact.district || '—'}</td>
                           <td>{contact.area || '—'}</td>
                           <td>{contact.mobile_number}</td>
@@ -4220,7 +4491,7 @@ export default function App() {
                       ))
                     ) : (
                       <tr>
-                        <td colSpan="13" style={{ textAlign: 'center', padding: 32, color: 'var(--color-text-muted)' }}>No contacts found matching selection.</td>
+                        <td colSpan="17" style={{ textAlign: 'center', padding: 32, color: 'var(--color-text-muted)' }}>No contacts found matching selection.</td>
                       </tr>
                     )}
                   </tbody>
@@ -4234,6 +4505,246 @@ export default function App() {
                   </div>
                 </div>
               </div>
+            </div>
+          )}
+
+          {/* ==================== BLOOD BANK DIRECTORY TAB ==================== */}
+          {activeTab === 'bloodbank' && (
+            <div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24, flexWrap: 'wrap', gap: 12 }}>
+                <div>
+                  <h2 className="tab-title" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <Droplet size={24} color="#ef4444" /> IAS Member Blood Bank & Donor Directory
+                  </h2>
+                  <p style={{ color: 'var(--color-text-secondary)', fontSize: 13, marginTop: 4 }}>
+                    Emergency life-saving blood donor registry for Indian Association Sharjah members across all UAE emirates.
+                  </p>
+                </div>
+                <div style={{ display: 'flex', gap: 10 }}>
+                  <button 
+                    className="btn primary" 
+                    onClick={() => { setShowEmergencyModal(true); setEmergencyTargetContact(null); }}
+                    style={{ background: 'linear-gradient(135deg, #ef4444, #dc2626)', borderColor: '#ef4444', display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                  >
+                    <Heart size={16} /> Broadcast Emergency Blood Request
+                  </button>
+                </div>
+              </div>
+
+              {/* Blood Group Summary Cards Grid */}
+              <div className="bloodbank-stats-grid">
+                <div 
+                  className={`bloodbank-stat-card ${bloodBankGroupFilter === 'All' ? 'active' : ''}`}
+                  onClick={() => setBloodBankGroupFilter('All')}
+                >
+                  <div className="bg-title" style={{ color: '#fff' }}>All</div>
+                  <div className="bg-count">{contacts.filter(c => c.blood_group && c.blood_group !== 'Unknown').length}</div>
+                  <div className="bg-label">Known Donors</div>
+                </div>
+
+                {['O+', 'B+', 'A+', 'AB+', 'O-', 'A-', 'B-', 'AB-'].map(grp => {
+                  const count = contacts.filter(c => c.blood_group === grp && c.account_status !== 'Inactive').length;
+                  const isNeg = grp.includes('-');
+                  return (
+                    <div 
+                      key={grp} 
+                      className={`bloodbank-stat-card ${bloodBankGroupFilter === grp ? 'active' : ''}`}
+                      onClick={() => setBloodBankGroupFilter(grp)}
+                      style={isNeg ? { borderColor: 'rgba(239, 68, 68, 0.4)' } : {}}
+                    >
+                      <div className="bg-title" style={isNeg ? { color: '#f87171' } : { color: '#34d399' }}>
+                        {grp}
+                      </div>
+                      <div className="bg-count">{count}</div>
+                      <div className="bg-label">{isNeg ? 'Rare Negative' : 'Positive'}</div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Filters and Search Bar */}
+              <div className="controls-bar">
+                <div className="search-wrapper">
+                  <Search size={18} className="search-icon" />
+                  <input 
+                    type="text" 
+                    placeholder="Search donors by Name, ID, Mobile number, or Area..." 
+                    className="search-input"
+                    value={bloodBankSearch}
+                    onChange={(e) => setBloodBankSearch(e.target.value)}
+                  />
+                </div>
+                <div className="filters-wrapper">
+                  <select 
+                    className="filter-select"
+                    value={bloodBankGroupFilter}
+                    onChange={(e) => setBloodBankGroupFilter(e.target.value)}
+                  >
+                    <option value="All">All Blood Groups</option>
+                    <option value="O+">O+ Donors</option>
+                    <option value="B+">B+ Donors</option>
+                    <option value="A+">A+ Donors</option>
+                    <option value="AB+">AB+ Donors</option>
+                    <option value="O-">O- Donors (Universal)</option>
+                    <option value="A-">A- Donors (Rare)</option>
+                    <option value="B-">B- Donors (Rare)</option>
+                    <option value="AB-">AB- Donors (Rare)</option>
+                    <option value="Unknown">Unknown Blood Group</option>
+                  </select>
+
+                  <select 
+                    className="filter-select"
+                    value={bloodBankDistrictFilter}
+                    onChange={(e) => setBloodBankDistrictFilter(e.target.value)}
+                  >
+                    <option value="All">All Districts</option>
+                    {uniqueDistricts.map(dist => (
+                      <option key={dist} value={dist}>{dist}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {/* Donors List Table */}
+              {(() => {
+                let donorList = contacts.filter(c => c.account_status !== 'Inactive');
+                
+                if (bloodBankGroupFilter !== 'All') {
+                  donorList = donorList.filter(c => (c.blood_group || 'Unknown') === bloodBankGroupFilter);
+                } else {
+                  donorList = donorList.filter(c => c.blood_group && c.blood_group !== 'Unknown');
+                }
+
+                if (bloodBankDistrictFilter !== 'All') {
+                  donorList = donorList.filter(c => c.district === bloodBankDistrictFilter);
+                }
+
+                if (bloodBankSearch) {
+                  const q = bloodBankSearch.toLowerCase();
+                  donorList = donorList.filter(c => 
+                    (c.account_name && c.account_name.toLowerCase().includes(q)) ||
+                    (c.acc_code && c.acc_code.toLowerCase().includes(q)) ||
+                    (c.mobile_number && c.mobile_number.includes(q)) ||
+                    (c.area && c.area.toLowerCase().includes(q))
+                  );
+                }
+
+                return (
+                  <div className="table-wrapper">
+                    <table className="contacts-table">
+                      <thead>
+                        <tr>
+                          <th>Photo</th>
+                          <th>Code</th>
+                          <th>Donor Name</th>
+                          <th>Blood Group</th>
+                          <th>DOB</th>
+                          <th>District</th>
+                          <th>Area</th>
+                          <th>Mobile</th>
+                          <th>Email</th>
+                          <th style={{ textAlign: 'right' }}>Emergency Contact</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {donorList.length > 0 ? (
+                          donorList.slice(0, 100).map(donor => {
+                            const isNeg = (donor.blood_group || '').includes('-');
+                            const cleanMob = (donor.mobile_number || '').replace(/\D/g, '');
+                            const urgentMsg = `🚨 *URGENT BLOOD DONATION REQUEST*\n\nDear *${donor.account_name}*,\n\nWe urgently require a blood donor of group *${donor.blood_group}* for a patient undergoing emergency treatment in UAE.\n\nCould you please let us know if you or someone in your network is available to donate? Your help can save a life!\n\nThank you,\n*Indian Association Sharjah*`;
+
+                            return (
+                              <tr key={donor.id}>
+                                <td style={{ width: 48 }}>
+                                  {donor.photo_filename ? (
+                                    <img 
+                                      src={`${PHOTO_BASE}/${encodeURIComponent(donor.photo_filename)}`}
+                                      alt={donor.account_name}
+                                      className="member-avatar-img"
+                                      onError={(e) => { e.target.style.display = 'none'; if (e.target.nextSibling) e.target.nextSibling.style.display = 'flex'; }}
+                                    />
+                                  ) : null}
+                                  <div 
+                                    className="member-avatar-fallback"
+                                    style={{ display: donor.photo_filename ? 'none' : 'flex' }}
+                                  >
+                                    {donor.account_name.substring(0, 2)}
+                                  </div>
+                                </td>
+                                <td><span style={{ fontWeight: 700, color: '#a855f7' }}>{donor.acc_code}</span></td>
+                                <td style={{ fontWeight: 600, color: '#fff' }}>{donor.account_name}</td>
+                                <td>
+                                  <span className={`badge-blood ${isNeg ? 'neg' : 'pos'}`} style={{ fontSize: 13, padding: '3px 10px' }}>
+                                    <Droplet size={13} /> {donor.blood_group || 'Unknown'}
+                                  </span>
+                                </td>
+                                <td style={{ fontSize: 12 }}>{donor.date_of_birth || '—'}</td>
+                                <td>{donor.district || '—'}</td>
+                                <td>{donor.area || '—'}</td>
+                                <td style={{ fontWeight: 600 }}>{donor.mobile_number}</td>
+                                <td style={{ fontSize: 12 }}>{donor.email_id || <span style={{ color: '#ef4444', fontStyle: 'italic' }}>None</span>}</td>
+                                <td style={{ textAlign: 'right' }}>
+                                  <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+                                    {donor.mobile_number && (
+                                      <>
+                                        <a 
+                                          href={`https://wa.me/${cleanMob}?text=${encodeURIComponent(urgentMsg)}`}
+                                          target="_blank"
+                                          rel="noreferrer"
+                                          className="action-btn"
+                                          title="Send Urgent WhatsApp"
+                                          style={{ background: 'rgba(16, 185, 129, 0.15)', color: '#10b981', border: '1px solid rgba(16, 185, 129, 0.3)' }}
+                                        >
+                                          <MessageSquare size={14} />
+                                        </a>
+                                        <a 
+                                          href={`tel:${donor.mobile_number}`}
+                                          className="action-btn"
+                                          title="Call Donor"
+                                          style={{ background: 'rgba(59, 130, 246, 0.15)', color: '#60a5fa', border: '1px solid rgba(59, 130, 246, 0.3)' }}
+                                        >
+                                          <Phone size={14} />
+                                        </a>
+                                      </>
+                                    )}
+                                    {donor.email_id && (
+                                      <a 
+                                        href={`mailto:${donor.email_id}?subject=${encodeURIComponent(`Urgent Blood Donation Request (${donor.blood_group})`)}&body=${encodeURIComponent(urgentMsg)}`}
+                                        className="action-btn"
+                                        title="Email Donor"
+                                        style={{ background: 'rgba(239, 68, 68, 0.15)', color: '#f87171', border: '1px solid rgba(239, 68, 68, 0.3)' }}
+                                      >
+                                        <Mail size={14} />
+                                      </a>
+                                    )}
+                                    <button 
+                                      className="action-btn"
+                                      title="Edit Donor Profile"
+                                      onClick={() => handleOpenDrawer(donor)}
+                                    >
+                                      <Edit2 size={14} />
+                                    </button>
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })
+                        ) : (
+                          <tr>
+                            <td colSpan="10" style={{ textAlign: 'center', padding: 32, color: 'var(--color-text-muted)' }}>
+                              No blood donors found matching filter criteria.
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                    <div style={{ padding: '12px 16px', fontSize: 12, color: 'var(--color-text-secondary)', borderTop: '1px solid var(--border-color)', display: 'flex', justifyContent: 'space-between' }}>
+                      <span>Showing {Math.min(100, donorList.length)} of {donorList.length} registered donors</span>
+                      <span>Total Donors with Known Blood Group: {contacts.filter(c => c.blood_group && c.blood_group !== 'Unknown').length}</span>
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
           )}
 
@@ -4559,6 +5070,107 @@ export default function App() {
                         <Save size={14} /> Save Template
                       </button>
                     </div>
+                  </div>
+                </div>
+
+                {/* Birthday Email Template Card */}
+                <div className="template-card">
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                    <h3 className="panel-title" style={{ color: '#ec4899', margin: 0 }}>
+                      <Cake size={18} /> Birthday Felicitation Email Template
+                    </h3>
+                    <span style={{ fontSize: 11, background: 'rgba(236, 72, 153, 0.15)', color: '#f472b6', padding: '2px 8px', borderRadius: 10, fontWeight: 600 }}>
+                      Daily 08:00 AM Cron
+                    </span>
+                  </div>
+                  <div className="template-variables" style={{ marginBottom: 8 }}>
+                    <span style={{ fontSize: 12, color: 'var(--color-text-muted)', alignSelf: 'center' }}>Insert Tag:</span>
+                    <button type="button" className="var-tag-btn" onClick={() => setTemplates(p => ({ ...p, birthday: (p.birthday || '') + ' {Name}' }))}>+ &#123;Name&#125;</button>
+                    <button type="button" className="var-tag-btn" onClick={() => setTemplates(p => ({ ...p, birthday: (p.birthday || '') + ' {AccCode}' }))}>+ &#123;AccCode&#125;</button>
+                    <button type="button" className="var-tag-btn" onClick={() => setTemplates(p => ({ ...p, birthday: (p.birthday || '') + ' {DateOfBirth}' }))}>+ &#123;DateOfBirth&#125;</button>
+                  </div>
+                  <div style={{ fontSize: 11, color: 'var(--color-text-secondary)', marginBottom: 8, lineHeight: 1.4 }}>
+                    Automated service runs every morning at 08:00 AM. Members celebrating their birthday receive an IAS felicitation greeting.
+                  </div>
+                  <textarea 
+                    className="drawer-textarea" 
+                    value={templates.birthday || ''} 
+                    onChange={(e) => setTemplates(p => ({ ...p, birthday: e.target.value }))}
+                    style={{ height: 160 }}
+                    placeholder="Enter birthday message template..."
+                  />
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 8 }}>
+                    <button 
+                      type="button" 
+                      className="btn" 
+                      onClick={() => {
+                        navigator.clipboard.writeText(templates.birthday || '');
+                        alert('Birthday email template copied to clipboard!');
+                      }}
+                    >
+                      <Copy size={14} /> Copy Template
+                    </button>
+                    <button 
+                      type="button" 
+                      className="btn primary" 
+                      onClick={() => {
+                        localStorage.setItem('campaign_templates', JSON.stringify(templates));
+                        alert('Birthday email template saved!');
+                      }}
+                    >
+                      <Save size={14} /> Save Template
+                    </button>
+                  </div>
+                </div>
+
+                {/* Emergency Blood Request Template Card */}
+                <div className="template-card">
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                    <h3 className="panel-title" style={{ color: '#ef4444', margin: 0 }}>
+                      <Heart size={18} /> Emergency Blood Donation Request Template
+                    </h3>
+                    <span style={{ fontSize: 11, background: 'rgba(239, 68, 68, 0.15)', color: '#f87171', padding: '2px 8px', borderRadius: 10, fontWeight: 600 }}>
+                      Urgent Outreach
+                    </span>
+                  </div>
+                  <div className="template-variables" style={{ marginBottom: 8 }}>
+                    <span style={{ fontSize: 12, color: 'var(--color-text-muted)', alignSelf: 'center' }}>Insert Tag:</span>
+                    <button type="button" className="var-tag-btn" onClick={() => setTemplates(p => ({ ...p, bloodRequest: (p.bloodRequest || '') + ' {Name}' }))}>+ &#123;Name&#125;</button>
+                    <button type="button" className="var-tag-btn" onClick={() => setTemplates(p => ({ ...p, bloodRequest: (p.bloodRequest || '') + ' {BloodGroup}' }))}>+ &#123;BloodGroup&#125;</button>
+                    <button type="button" className="var-tag-btn" onClick={() => setTemplates(p => ({ ...p, bloodRequest: (p.bloodRequest || '') + ' {Hospital}' }))}>+ &#123;Hospital&#125;</button>
+                    <button type="button" className="var-tag-btn" onClick={() => setTemplates(p => ({ ...p, bloodRequest: (p.bloodRequest || '') + ' {Patient}' }))}>+ &#123;Patient&#125;</button>
+                  </div>
+                  <div style={{ fontSize: 11, color: 'var(--color-text-secondary)', marginBottom: 8, lineHeight: 1.4 }}>
+                    Broadcasted to matching registered donors via WhatsApp and SMS during life-saving emergency situations.
+                  </div>
+                  <textarea 
+                    className="drawer-textarea" 
+                    value={templates.bloodRequest || ''} 
+                    onChange={(e) => setTemplates(p => ({ ...p, bloodRequest: e.target.value }))}
+                    style={{ height: 160 }}
+                    placeholder="Enter urgent blood request template..."
+                  />
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 8 }}>
+                    <button 
+                      type="button" 
+                      className="btn" 
+                      onClick={() => {
+                        navigator.clipboard.writeText(templates.bloodRequest || '');
+                        alert('Emergency blood request template copied to clipboard!');
+                      }}
+                    >
+                      <Copy size={14} /> Copy Template
+                    </button>
+                    <button 
+                      type="button" 
+                      className="btn primary" 
+                      onClick={() => {
+                        localStorage.setItem('campaign_templates', JSON.stringify(templates));
+                        alert('Emergency blood request template saved!');
+                      }}
+                    >
+                      <Save size={14} /> Save Template
+                    </button>
                   </div>
                 </div>
               </div>
@@ -4906,12 +5518,63 @@ export default function App() {
         <div className="drawer-backdrop" onClick={() => setIsDrawerOpen(false)}>
           <div className="drawer" onClick={(e) => e.stopPropagation()}>
             <div className="drawer-header">
-              <h3 className="drawer-title">Outreach Call & log Notes</h3>
+              <h3 className="drawer-title">Member Profile & Outreach Logs</h3>
               <button className="close-btn" onClick={() => setIsDrawerOpen(false)}>×</button>
             </div>
 
+            {/* Member Photo & Identity Header */}
+            <div className="drawer-photo-header">
+              {selectedContact.photo_filename ? (
+                <img 
+                  src={`${PHOTO_BASE}/${encodeURIComponent(selectedContact.photo_filename)}`}
+                  alt={selectedContact.account_name}
+                  className="drawer-avatar-large"
+                  onError={(e) => { e.target.style.display = 'none'; if (e.target.nextSibling) e.target.nextSibling.style.display = 'flex'; }}
+                />
+              ) : null}
+              <div 
+                className="drawer-avatar-fallback-large"
+                style={{ display: selectedContact.photo_filename ? 'none' : 'flex' }}
+              >
+                {selectedContact.account_name.substring(0, 2)}
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 17, fontWeight: 700, color: 'var(--color-text-white)' }}>
+                  {selectedContact.account_name}
+                </div>
+                <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', display: 'flex', alignItems: 'center', gap: 6, marginTop: 4 }}>
+                  <span style={{ fontWeight: 700, color: '#818cf8' }}>{selectedContact.acc_code}</span>
+                  <span>•</span>
+                  <span>S.No {selectedContact.s_no}</span>
+                  {selectedContact.blood_group && selectedContact.blood_group !== 'Unknown' && (
+                    <>
+                      <span>•</span>
+                      <span className={`badge-blood ${selectedContact.blood_group.includes('-') ? 'neg' : 'pos'}`} style={{ fontSize: 10, padding: '1px 5px' }}>
+                        {selectedContact.blood_group}
+                      </span>
+                    </>
+                  )}
+                </div>
+                {selectedContact.date_of_birth && selectedContact.date_of_birth.substring(0, 5) === getTodayDayMonth() && (
+                  <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span style={{ background: 'rgba(236, 72, 153, 0.15)', border: '1px solid #ec4899', color: '#f472b6', padding: '2px 8px', borderRadius: 6, fontSize: 11, fontWeight: 700 }}>
+                      🎂 Birthday Today!
+                    </span>
+                    <button
+                      className="btn"
+                      style={{ padding: '2px 8px', fontSize: 11, height: 'auto', background: '#6366f1', borderColor: '#6366f1', color: '#ffffff' }}
+                      onClick={() => handleSendSingleBirthday(selectedContact.id, selectedContact.account_name)}
+                      disabled={isSendingBirthdayEmail}
+                    >
+                      <Send size={11} style={{ marginRight: 4 }} /> Send Birthday Email
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+
             <div className="drawer-section">
-              <h4 className="drawer-section-title">Contact Profile</h4>
+              <h4 className="drawer-section-title">Contact Profile & Membership Data</h4>
               <div className="grid-2">
                 <div className="drawer-field">
                   <span className="drawer-label">S.No</span>
@@ -4931,6 +5594,62 @@ export default function App() {
                   onChange={(e) => setSelectedContact(prev => ({ ...prev, account_name: e.target.value }))}
                 />
               </div>
+
+              {/* Blood Group, DOB and DOJ */}
+              <div className="grid-2">
+                <div className="drawer-field">
+                  <span className="drawer-label">Blood Group</span>
+                  <select 
+                    className="drawer-input"
+                    value={selectedContact.blood_group || 'Unknown'}
+                    onChange={(e) => setSelectedContact(prev => ({ ...prev, blood_group: e.target.value }))}
+                  >
+                    <option value="Unknown">Unknown / Not Recorded</option>
+                    <option value="O+">O+ (Common)</option>
+                    <option value="A+">A+</option>
+                    <option value="B+">B+</option>
+                    <option value="AB+">AB+</option>
+                    <option value="O-">O- (Universal Donor)</option>
+                    <option value="A-">A- (Rare)</option>
+                    <option value="B-">B- (Rare)</option>
+                    <option value="AB-">AB- (Rare)</option>
+                  </select>
+                </div>
+                <div className="drawer-field">
+                  <span className="drawer-label">Date of Birth (DD/MM/YYYY)</span>
+                  <input 
+                    type="text" 
+                    className="drawer-input" 
+                    placeholder="DD/MM/YYYY"
+                    value={selectedContact.date_of_birth || ''} 
+                    onChange={(e) => setSelectedContact(prev => ({ ...prev, date_of_birth: e.target.value }))}
+                  />
+                </div>
+              </div>
+
+              <div className="grid-2">
+                <div className="drawer-field">
+                  <span className="drawer-label">Date of Join (DD/MM/YYYY)</span>
+                  <input 
+                    type="text" 
+                    className="drawer-input" 
+                    placeholder="DD/MM/YYYY"
+                    value={selectedContact.date_of_join || ''} 
+                    onChange={(e) => setSelectedContact(prev => ({ ...prev, date_of_join: e.target.value }))}
+                  />
+                </div>
+                <div className="drawer-field">
+                  <span className="drawer-label">Photo Filename</span>
+                  <input 
+                    type="text" 
+                    className="drawer-input" 
+                    placeholder="e.g. NAME_L123.png"
+                    value={selectedContact.photo_filename || ''} 
+                    onChange={(e) => setSelectedContact(prev => ({ ...prev, photo_filename: e.target.value }))}
+                  />
+                </div>
+              </div>
+
               <div className="drawer-field">
                 <span className="drawer-label">Mobile Number</span>
                 <input 
@@ -4949,47 +5668,51 @@ export default function App() {
                   onChange={(e) => setSelectedContact(prev => ({ ...prev, email_id: e.target.value }))}
                 />
               </div>
-              <div className="drawer-field">
-                <span className="drawer-label">District</span>
-                <input 
-                  type="text" 
-                  className="drawer-input" 
-                  value={selectedContact.district || ''} 
-                  onChange={(e) => setSelectedContact(prev => ({ ...prev, district: e.target.value }))}
-                />
+              <div className="grid-2">
+                <div className="drawer-field">
+                  <span className="drawer-label">District</span>
+                  <input 
+                    type="text" 
+                    className="drawer-input" 
+                    value={selectedContact.district || ''} 
+                    onChange={(e) => setSelectedContact(prev => ({ ...prev, district: e.target.value }))}
+                  />
+                </div>
+                <div className="drawer-field">
+                  <span className="drawer-label">Area</span>
+                  <input 
+                    type="text" 
+                    className="drawer-input" 
+                    value={selectedContact.area || ''} 
+                    onChange={(e) => setSelectedContact(prev => ({ ...prev, area: e.target.value }))}
+                  />
+                </div>
               </div>
-              <div className="drawer-field">
-                <span className="drawer-label">Area</span>
-                <input 
-                  type="text" 
-                  className="drawer-input" 
-                  value={selectedContact.area || ''} 
-                  onChange={(e) => setSelectedContact(prev => ({ ...prev, area: e.target.value }))}
-                />
-              </div>
-              <div className="drawer-field">
-                <span className="drawer-label">Account Status</span>
-                <select 
-                  className="drawer-input"
-                  value={selectedContact.account_status || 'Active'}
-                  onChange={(e) => setSelectedContact(prev => ({ ...prev, account_status: e.target.value }))}
-                >
-                  <option value="Active">Active (Included in campaigns)</option>
-                  <option value="Inactive">Inactive (Excluded from lists & stats)</option>
-                </select>
-              </div>
-              <div className="drawer-field">
-                <span className="drawer-label">Assigned Volunteer</span>
-                <select 
-                  className="drawer-input"
-                  value={selectedContact.assigned_to || 'Unassigned'}
-                  onChange={(e) => setSelectedContact(prev => ({ ...prev, assigned_to: e.target.value }))}
-                >
-                  <option value="Unassigned">Unassigned</option>
-                  {volunteers.map(name => (
-                    <option key={name} value={name}>{name}</option>
-                  ))}
-                </select>
+              <div className="grid-2">
+                <div className="drawer-field">
+                  <span className="drawer-label">Account Status</span>
+                  <select 
+                    className="drawer-input"
+                    value={selectedContact.account_status || 'Active'}
+                    onChange={(e) => setSelectedContact(prev => ({ ...prev, account_status: e.target.value }))}
+                  >
+                    <option value="Active">Active (Included in campaigns)</option>
+                    <option value="Inactive">Inactive (Excluded from lists & stats)</option>
+                  </select>
+                </div>
+                <div className="drawer-field">
+                  <span className="drawer-label">Assigned Volunteer</span>
+                  <select 
+                    className="drawer-input"
+                    value={selectedContact.assigned_to || 'Unassigned'}
+                    onChange={(e) => setSelectedContact(prev => ({ ...prev, assigned_to: e.target.value }))}
+                  >
+                    <option value="Unassigned">Unassigned</option>
+                    {volunteers.map(name => (
+                      <option key={name} value={name}>{name}</option>
+                    ))}
+                  </select>
+                </div>
               </div>
             </div>
 
@@ -6435,6 +7158,238 @@ export default function App() {
 
               <div style={{ display: 'flex', justifyContent: 'flex-end', borderTop: '1px solid var(--border-color)', paddingTop: 12 }}>
                 <button className="btn" onClick={() => setShowSmsInboxModal(false)}>
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ==================== EMERGENCY BLOOD DONATION MODAL ==================== */}
+      {showEmergencyModal && (
+        <div className="modal-backdrop" onClick={() => setShowEmergencyModal(false)}>
+          <div className="modal" style={{ maxWidth: 740, width: '92%', maxHeight: '90vh', display: 'flex', flexDirection: 'column' }} onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <div style={{ background: 'rgba(239, 68, 68, 0.15)', padding: 8, borderRadius: 8, color: '#f87171', display: 'flex' }}>
+                  <Heart size={22} />
+                </div>
+                <div>
+                  <h3 className="drawer-title" style={{ margin: 0, fontSize: 18, color: '#ef4444' }}>
+                    🚨 Emergency Blood Donation Dispatch
+                  </h3>
+                  <p style={{ margin: 0, fontSize: 12, color: 'var(--color-text-muted)' }}>
+                    Coordinate urgent blood donation requests with matched registered IAS donors
+                  </p>
+                </div>
+              </div>
+              <button type="button" className="close-btn" onClick={() => setShowEmergencyModal(false)}>×</button>
+            </div>
+
+            <div style={{ padding: '16px 20px 20px 20px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 16 }}>
+              {/* Emergency Request Form Fields */}
+              <div className="grid-2" style={{ gap: 12 }}>
+                <div>
+                  <label className="drawer-label">Requested Blood Group *</label>
+                  <select 
+                    className="drawer-input" 
+                    value={emergencyBloodGroup} 
+                    onChange={(e) => setEmergencyBloodGroup(e.target.value)}
+                    style={{ fontWeight: 700, borderColor: '#ef4444' }}
+                  >
+                    <option value="O+">O+ Positive</option>
+                    <option value="B+">B+ Positive</option>
+                    <option value="A+">A+ Positive</option>
+                    <option value="AB+">AB+ Positive</option>
+                    <option value="O-">O- Negative (Universal Donor)</option>
+                    <option value="A-">A- Negative (Rare)</option>
+                    <option value="B-">B- Negative (Rare)</option>
+                    <option value="AB-">AB- Negative (Rare)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="drawer-label">Hospital / Medical Center *</label>
+                  <input 
+                    type="text" 
+                    className="drawer-input" 
+                    placeholder="e.g. Al Qassimi Hospital, Sharjah / Kuwait Hospital" 
+                    value={emergencyHospital} 
+                    onChange={(e) => setEmergencyHospital(e.target.value)}
+                  />
+                </div>
+
+                <div>
+                  <label className="drawer-label">Patient Name / Case ID</label>
+                  <input 
+                    type="text" 
+                    className="drawer-input" 
+                    placeholder="e.g. Emergency Patient / Ward ICU" 
+                    value={emergencyPatient} 
+                    onChange={(e) => setEmergencyPatient(e.target.value)}
+                  />
+                </div>
+
+                <div>
+                  <label className="drawer-label">Emergency Contact Phone Number</label>
+                  <input 
+                    type="text" 
+                    className="drawer-input" 
+                    placeholder="e.g. +971 50 123 4567" 
+                    value={emergencyContactPhone} 
+                    onChange={(e) => setEmergencyContactPhone(e.target.value)}
+                  />
+                </div>
+              </div>
+
+              {/* Matched Donors and Preview */}
+              {(() => {
+                const matchingDonors = contacts.filter(c => 
+                  c.account_status !== 'Inactive' && 
+                  c.blood_group === emergencyBloodGroup &&
+                  c.mobile_number
+                );
+
+                const formattedMsg = (templates.bloodRequest || DEFAULT_TEMPLATES.bloodRequest)
+                  .replace(/{Name}/g, '{DonorName}')
+                  .replace(/{BloodGroup}/g, emergencyBloodGroup)
+                  .replace(/{Hospital}/g, emergencyHospital || 'Hospital in UAE')
+                  .replace(/{Patient}/g, emergencyPatient || 'Emergency Patient')
+                  .replace(/{Contact}/g, emergencyContactPhone || '');
+
+                return (
+                  <>
+                    {/* Live Broadcast Message Preview */}
+                    <div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                        <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-text-white)' }}>
+                          Message Preview (Ready for WhatsApp / SMS):
+                        </span>
+                        <button 
+                          type="button" 
+                          className="btn" 
+                          style={{ fontSize: 12, padding: '3px 10px' }}
+                          onClick={() => {
+                            navigator.clipboard.writeText(formattedMsg.replace('{DonorName}', 'Valued Member'));
+                            alert('Emergency message text copied to clipboard!');
+                          }}
+                        >
+                          <Copy size={13} /> Copy Message
+                        </button>
+                      </div>
+                      <pre style={{ 
+                        background: 'rgba(0,0,0,0.25)', 
+                        border: '1px solid var(--border-color)', 
+                        borderRadius: 8, 
+                        padding: 12, 
+                        fontSize: 12, 
+                        whiteSpace: 'pre-wrap', 
+                        fontFamily: 'inherit',
+                        color: 'var(--color-text-primary)',
+                        maxHeight: 140,
+                        overflowY: 'auto'
+                      }}>
+                        {formattedMsg.replace('{DonorName}', 'Valued Member')}
+                      </pre>
+                    </div>
+
+                    {/* Matching Donors in Database */}
+                    <div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <Users size={16} color="#f87171" />
+                          <strong style={{ fontSize: 13, color: 'var(--color-text-white)' }}>
+                            Available Matched Donors ({matchingDonors.length} found with {emergencyBloodGroup})
+                          </strong>
+                        </div>
+                        <span style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
+                          Click to contact immediately
+                        </span>
+                      </div>
+
+                      <div style={{ maxHeight: 240, overflowY: 'auto', border: '1px solid var(--border-color)', borderRadius: 8, background: 'rgba(0,0,0,0.15)' }}>
+                        {matchingDonors.length > 0 ? (
+                          matchingDonors.slice(0, 50).map(donor => {
+                            const donorCleanMob = (donor.mobile_number || '').replace(/\D/g, '');
+                            const singleDonorMsg = (templates.bloodRequest || DEFAULT_TEMPLATES.bloodRequest)
+                              .replace(/{Name}/g, donor.account_name)
+                              .replace(/{BloodGroup}/g, emergencyBloodGroup)
+                              .replace(/{Hospital}/g, emergencyHospital || 'Hospital in UAE')
+                              .replace(/{Patient}/g, emergencyPatient || 'Emergency Patient')
+                              .replace(/{Contact}/g, emergencyContactPhone || '');
+
+                            return (
+                              <div 
+                                key={donor.id}
+                                style={{ 
+                                  display: 'flex', 
+                                  justifyContent: 'space-between', 
+                                  alignItems: 'center', 
+                                  padding: '10px 14px', 
+                                  borderBottom: '1px solid rgba(255,255,255,0.05)',
+                                  gap: 12
+                                }}
+                              >
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0, flex: 1 }}>
+                                  {donor.photo_filename ? (
+                                    <img 
+                                      src={`${PHOTO_BASE}/${encodeURIComponent(donor.photo_filename)}`}
+                                      alt={donor.account_name}
+                                      style={{ width: 32, height: 32, borderRadius: '50%', objectFit: 'cover' }}
+                                      onError={(e) => { e.target.style.display = 'none'; }}
+                                    />
+                                  ) : (
+                                    <div style={{ width: 32, height: 32, borderRadius: '50%', background: '#6366f1', color: '#fff', fontSize: 11, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                      {donor.account_name.substring(0, 2)}
+                                    </div>
+                                  )}
+                                  <div style={{ minWidth: 0 }}>
+                                    <div style={{ fontWeight: 600, color: 'var(--color-text-white)', fontSize: 13, textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>
+                                      {donor.account_name} <span style={{ fontSize: 11, color: '#a855f7' }}>({donor.acc_code})</span>
+                                    </div>
+                                    <div style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>
+                                      {donor.area || donor.district || 'UAE'} • {donor.mobile_number}
+                                    </div>
+                                  </div>
+                                </div>
+
+                                <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                                  <a 
+                                    href={`https://wa.me/${donorCleanMob}?text=${encodeURIComponent(singleDonorMsg)}`}
+                                    target="_blank" 
+                                    rel="noreferrer"
+                                    className="action-btn"
+                                    style={{ background: 'rgba(16, 185, 129, 0.15)', color: '#10b981', border: '1px solid rgba(16, 185, 129, 0.3)', padding: '6px 10px', height: 'auto', display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 12 }}
+                                    title="Send Urgent WhatsApp"
+                                  >
+                                    <MessageSquare size={13} /> WhatsApp
+                                  </a>
+                                  <a 
+                                    href={`tel:${donor.mobile_number}`}
+                                    className="action-btn"
+                                    style={{ background: 'rgba(59, 130, 246, 0.15)', color: '#60a5fa', border: '1px solid rgba(59, 130, 246, 0.3)', padding: '6px 10px', height: 'auto', display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 12 }}
+                                    title="Call Donor"
+                                  >
+                                    <Phone size={13} /> Call
+                                  </a>
+                                </div>
+                              </div>
+                            );
+                          })
+                        ) : (
+                          <div style={{ padding: 24, textAlign: 'center', color: 'var(--color-text-muted)', fontSize: 13 }}>
+                            No active donors found with blood group {emergencyBloodGroup}. Try searching universal donors (O-).
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </>
+                );
+              })()}
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', borderTop: '1px solid var(--border-color)', paddingTop: 12, marginTop: 8 }}>
+                <button className="btn" onClick={() => setShowEmergencyModal(false)}>
                   Close
                 </button>
               </div>

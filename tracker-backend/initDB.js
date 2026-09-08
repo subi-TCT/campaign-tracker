@@ -65,7 +65,12 @@ if (isPostgres) {
           district TEXT,
           assigned_to TEXT DEFAULT 'Unassigned',
           account_status TEXT DEFAULT 'Active',
-          area TEXT
+          area TEXT,
+          date_of_birth TEXT DEFAULT '',
+          date_of_join TEXT DEFAULT '',
+          blood_group TEXT DEFAULT '',
+          photo_filename TEXT DEFAULT '',
+          birthday_sent_year INTEGER DEFAULT 0
         )
       `);
 
@@ -90,6 +95,7 @@ if (isPostgres) {
             $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++},
             $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++},
             $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++},
+            $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++},
             $${paramIndex++}, $${paramIndex++}, $${paramIndex++}
           )`);
           params.push(
@@ -110,7 +116,12 @@ if (isPostgres) {
             contact.emirate || '',
             contact.district || '',
             contact.assigned_to || 'Unassigned',
-            contact.area || ''
+            contact.area || '',
+            contact.date_of_birth || '',
+            contact.date_of_join || '',
+            contact.blood_group || '',
+            contact.photo_filename || '',
+            contact.birthday_sent_year || 0
           );
         }
 
@@ -121,7 +132,8 @@ if (isPostgres) {
             whatsapp_status, whatsapp_sent_date,
             call_status, call_sent_date, notes,
             member_reaction, exit_poll_status,
-            emirate, district, assigned_to, area
+            emirate, district, assigned_to, area,
+            date_of_birth, date_of_join, blood_group, photo_filename, birthday_sent_year
           ) VALUES ${valueRows.join(', ')}
         `;
         await pool.query(bulkQuery, params);
@@ -180,7 +192,12 @@ if (isPostgres) {
         district TEXT,
         assigned_to TEXT DEFAULT 'Unassigned',
         account_status TEXT DEFAULT 'Active',
-        area TEXT
+        area TEXT,
+        date_of_birth TEXT DEFAULT '',
+        date_of_join TEXT DEFAULT '',
+        blood_group TEXT DEFAULT '',
+        photo_filename TEXT DEFAULT '',
+        birthday_sent_year INTEGER DEFAULT 0
       )
     `, (err) => {
       if (err) {
@@ -208,9 +225,10 @@ if (isPostgres) {
             whatsapp_status, whatsapp_sent_date, 
             call_status, call_sent_date, notes,
             member_reaction, exit_poll_status,
-            emirate, district, assigned_to, area
+            emirate, district, assigned_to, area,
+            date_of_birth, date_of_join, blood_group, photo_filename, birthday_sent_year
           )
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `);
 
         db.parallelize(() => {
@@ -233,7 +251,12 @@ if (isPostgres) {
               contact.emirate || '',
               contact.district || '',
               contact.assigned_to || 'Unassigned',
-              contact.area || ''
+              contact.area || '',
+              contact.date_of_birth || '',
+              contact.date_of_join || '',
+              contact.blood_group || '',
+              contact.photo_filename || '',
+              contact.birthday_sent_year || 0
             );
           }
         });

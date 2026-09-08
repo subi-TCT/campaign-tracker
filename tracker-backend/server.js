@@ -6,6 +6,8 @@ const path = require('path');
 const xlsx = require('xlsx');
 const axios = require('axios');
 const crypto = require('crypto');
+const nodemailer = require('nodemailer');
+const cron = require('node-cron');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -32,6 +34,9 @@ app.use(express.json({
     req.rawBody = buf;
   }
 }));
+
+// Serve member photos statically from extracted_photos directory
+app.use('/photos', express.static(path.join(__dirname, 'extracted_photos')));
 
 const fs = require('fs');
 let dbDir = process.env.DATABASE_DIR || __dirname;
@@ -248,6 +253,11 @@ const initPostgresDB = async () => {
         await pgPool.query("ALTER TABLE contacts ADD COLUMN IF NOT EXISTS area TEXT");
         await pgPool.query("ALTER TABLE contacts ADD COLUMN IF NOT EXISTS sms_status TEXT DEFAULT 'Pending'");
         await pgPool.query("ALTER TABLE contacts ADD COLUMN IF NOT EXISTS sms_sent_date TEXT DEFAULT ''");
+        await pgPool.query("ALTER TABLE contacts ADD COLUMN IF NOT EXISTS date_of_birth TEXT DEFAULT ''");
+        await pgPool.query("ALTER TABLE contacts ADD COLUMN IF NOT EXISTS date_of_join TEXT DEFAULT ''");
+        await pgPool.query("ALTER TABLE contacts ADD COLUMN IF NOT EXISTS blood_group TEXT DEFAULT ''");
+        await pgPool.query("ALTER TABLE contacts ADD COLUMN IF NOT EXISTS photo_filename TEXT DEFAULT ''");
+        await pgPool.query("ALTER TABLE contacts ADD COLUMN IF NOT EXISTS birthday_sent_year INTEGER DEFAULT 0");
         await pgPool.query(`
           CREATE TABLE IF NOT EXISTS incoming_sms (
             id SERIAL PRIMARY KEY,
@@ -484,6 +494,31 @@ const initSqliteDB = () => {
             console.error("Migration error adding sms_sent_date:", alterErr.message);
           }
         });
+        db.run("ALTER TABLE contacts ADD COLUMN date_of_birth TEXT DEFAULT ''", (alterErr) => {
+          if (alterErr && !alterErr.message.includes("duplicate column name") && !alterErr.message.includes("duplicate column")) {
+            console.error("Migration error adding date_of_birth:", alterErr.message);
+          }
+        });
+        db.run("ALTER TABLE contacts ADD COLUMN date_of_join TEXT DEFAULT ''", (alterErr) => {
+          if (alterErr && !alterErr.message.includes("duplicate column name") && !alterErr.message.includes("duplicate column")) {
+            console.error("Migration error adding date_of_join:", alterErr.message);
+          }
+        });
+        db.run("ALTER TABLE contacts ADD COLUMN blood_group TEXT DEFAULT ''", (alterErr) => {
+          if (alterErr && !alterErr.message.includes("duplicate column name") && !alterErr.message.includes("duplicate column")) {
+            console.error("Migration error adding blood_group:", alterErr.message);
+          }
+        });
+        db.run("ALTER TABLE contacts ADD COLUMN photo_filename TEXT DEFAULT ''", (alterErr) => {
+          if (alterErr && !alterErr.message.includes("duplicate column name") && !alterErr.message.includes("duplicate column")) {
+            console.error("Migration error adding photo_filename:", alterErr.message);
+          }
+        });
+        db.run("ALTER TABLE contacts ADD COLUMN birthday_sent_year INTEGER DEFAULT 0", (alterErr) => {
+          if (alterErr && !alterErr.message.includes("duplicate column name") && !alterErr.message.includes("duplicate column")) {
+            console.error("Migration error adding birthday_sent_year:", alterErr.message);
+          }
+        });
         db.run(`CREATE TABLE IF NOT EXISTS incoming_sms (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           sms_id TEXT,
@@ -628,7 +663,8 @@ app.post('/api/contacts/bulk-import', async (req, res) => {
     // 1. Fetch existing contacts to match by acc_code in-memory
     const existingList = await query(`
       SELECT id, s_no, acc_code, account_name, mobile_number, email_id,
-             district, area, emirate, assigned_to, member_reaction, notes, account_status
+             district, area, emirate, assigned_to, member_reaction, notes, account_status,
+             date_of_birth, date_of_join, blood_group, photo_filename
       FROM contacts
     `);
 
@@ -695,6 +731,10 @@ app.post('/api/contacts/bulk-import', async (req, res) => {
         checkAndUpdate('member_reaction', row.member_reaction, match.member_reaction);
         checkAndUpdate('notes', row.notes, match.notes);
         checkAndUpdate('account_status', row.account_status, match.account_status);
+        checkAndUpdate('date_of_birth', row.date_of_birth, match.date_of_birth);
+        checkAndUpdate('date_of_join', row.date_of_join, match.date_of_join);
+        checkAndUpdate('blood_group', row.blood_group, match.blood_group);
+        checkAndUpdate('photo_filename', row.photo_filename, match.photo_filename);
 
         if (row.s_no !== undefined && row.s_no !== null && Number(row.s_no) > 0) {
           const snoNum = parseInt(row.s_no, 10);
@@ -725,17 +765,23 @@ app.post('/api/contacts/bulk-import', async (req, res) => {
         const notes = row.notes ? String(row.notes).trim() : '';
         const status = row.account_status ? String(row.account_status).trim() : 'Active';
         const sNo = row.s_no ? parseInt(row.s_no, 10) || 0 : 0;
+        const dob = row.date_of_birth ? String(row.date_of_birth).trim() : '';
+        const doj = row.date_of_join ? String(row.date_of_join).trim() : '';
+        const bg = row.blood_group ? String(row.blood_group).trim() : '';
+        const photo = row.photo_filename ? String(row.photo_filename).trim() : '';
 
         const insertSql = `
           INSERT INTO contacts (
             s_no, acc_code, account_name, mobile_number, email_id, 
             district, area, emirate, assigned_to, member_reaction, notes, account_status,
+            date_of_birth, date_of_join, blood_group, photo_filename,
             email_status, whatsapp_status, sms_status, call_status, exit_poll_status
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Pending', 'Pending', 'Pending', 'Not Called', 'Pending')
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Pending', 'Pending', 'Pending', 'Not Called', 'Pending')
         `;
         const insertParams = [
           sNo, accCodeRaw, name, mobile, email,
-          district, area, emirate, assigned_to, reaction, notes, status
+          district, area, emirate, assigned_to, reaction, notes, status,
+          dob, doj, bg, photo
         ];
         const resInsert = await run(insertSql, insertParams);
         insertedCount++;
@@ -783,7 +829,8 @@ app.get('/api/contacts', async (req, res) => {
              sms_status, sms_sent_date,
              call_status, call_sent_date, notes,
              member_reaction, exit_poll_status,
-             emirate, district, assigned_to, account_status, area
+             emirate, district, assigned_to, account_status, area,
+             date_of_birth, date_of_join, blood_group, photo_filename, birthday_sent_year
       FROM contacts 
       ORDER BY s_no ASC
     `);
@@ -796,12 +843,12 @@ app.get('/api/contacts', async (req, res) => {
 
 // POST create a new contact
 app.post('/api/contacts', async (req, res) => {
-  const { s_no, acc_code, account_name, mobile_number, email_id, area } = req.body;
+  const { s_no, acc_code, account_name, mobile_number, email_id, area, date_of_birth, date_of_join, blood_group, photo_filename } = req.body;
   try {
     const result = await run(`
-      INSERT INTO contacts (s_no, acc_code, account_name, mobile_number, email_id, area)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `, [s_no, acc_code, account_name, mobile_number, email_id, area]);
+      INSERT INTO contacts (s_no, acc_code, account_name, mobile_number, email_id, area, date_of_birth, date_of_join, blood_group, photo_filename)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [s_no, acc_code, account_name, mobile_number, email_id, area, date_of_birth || '', date_of_join || '', blood_group || '', photo_filename || '']);
     
     const [row] = await query('SELECT * FROM contacts WHERE id = ?', [result.id]);
     res.status(201).json(row);
@@ -815,6 +862,9 @@ app.post('/api/contacts', async (req, res) => {
 app.put('/api/contacts/:id', async (req, res) => {
   const { id } = req.params;
   const {
+    account_name,
+    mobile_number,
+    email_id,
     email_status,
     email_sent_date,
     whatsapp_status,
@@ -830,7 +880,12 @@ app.put('/api/contacts/:id', async (req, res) => {
     district,
     assigned_to,
     account_status,
-    area
+    area,
+    date_of_birth,
+    date_of_join,
+    blood_group,
+    photo_filename,
+    birthday_sent_year
   } = req.body;
 
   try {
@@ -841,6 +896,9 @@ app.put('/api/contacts/:id', async (req, res) => {
     }
 
     const updated = {
+      account_name: account_name !== undefined ? account_name : existing.account_name,
+      mobile_number: mobile_number !== undefined ? mobile_number : existing.mobile_number,
+      email_id: email_id !== undefined ? email_id : existing.email_id,
       email_status: email_status !== undefined ? email_status : existing.email_status,
       email_sent_date: email_sent_date !== undefined ? email_sent_date : existing.email_sent_date,
       whatsapp_status: whatsapp_status !== undefined ? whatsapp_status : existing.whatsapp_status,
@@ -856,20 +914,30 @@ app.put('/api/contacts/:id', async (req, res) => {
       district: district !== undefined ? district : existing.district,
       assigned_to: assigned_to !== undefined ? assigned_to : existing.assigned_to,
       account_status: account_status !== undefined ? account_status : existing.account_status,
-      area: area !== undefined ? area : existing.area
+      area: area !== undefined ? area : existing.area,
+      date_of_birth: date_of_birth !== undefined ? date_of_birth : existing.date_of_birth,
+      date_of_join: date_of_join !== undefined ? date_of_join : existing.date_of_join,
+      blood_group: blood_group !== undefined ? blood_group : existing.blood_group,
+      photo_filename: photo_filename !== undefined ? photo_filename : existing.photo_filename,
+      birthday_sent_year: birthday_sent_year !== undefined ? birthday_sent_year : existing.birthday_sent_year
     };
 
     await run(`
       UPDATE contacts 
-      SET email_status = ?, email_sent_date = ?, 
+      SET account_name = ?, mobile_number = ?, email_id = ?,
+          email_status = ?, email_sent_date = ?, 
           whatsapp_status = ?, whatsapp_sent_date = ?, 
           sms_status = ?, sms_sent_date = ?,
           call_status = ?, call_sent_date = ?, notes = ?,
           member_reaction = ?, exit_poll_status = ?,
           emirate = ?, district = ?, assigned_to = ?,
-          account_status = ?, area = ?
+          account_status = ?, area = ?,
+          date_of_birth = ?, date_of_join = ?, blood_group = ?, photo_filename = ?, birthday_sent_year = ?
       WHERE id = ?
     `, [
+      updated.account_name,
+      updated.mobile_number,
+      updated.email_id,
       updated.email_status,
       updated.email_sent_date,
       updated.whatsapp_status,
@@ -886,6 +954,11 @@ app.put('/api/contacts/:id', async (req, res) => {
       updated.assigned_to,
       updated.account_status,
       updated.area,
+      updated.date_of_birth,
+      updated.date_of_join,
+      updated.blood_group,
+      updated.photo_filename,
+      updated.birthday_sent_year,
       id
     ]);
 
@@ -1610,6 +1683,432 @@ app.get('/api/stats', async (req, res) => {
     res.status(500).json({ error: 'Database error' });
   }
 });
+
+// ==========================================
+// BLOOD BANK APIS
+// ==========================================
+
+// GET blood bank summary statistics
+app.get('/api/blood-bank/summary', async (req, res) => {
+  try {
+    const rows = await query(`
+      SELECT blood_group, count(*) as count 
+      FROM contacts 
+      WHERE account_status != 'Inactive'
+      GROUP BY blood_group
+    `);
+    
+    const summary = {
+      totalDonors: 0,
+      groups: {
+        'A+': 0, 'A-': 0,
+        'B+': 0, 'B-': 0,
+        'AB+': 0, 'AB-': 0,
+        'O+': 0, 'O-': 0,
+        'Unknown': 0
+      }
+    };
+    
+    rows.forEach(r => {
+      const bg = (r.blood_group || '').trim() || 'Unknown';
+      const count = parseInt(r.count || 0, 10);
+      if (summary.groups[bg] !== undefined) {
+        summary.groups[bg] += count;
+      } else {
+        summary.groups['Unknown'] += count;
+      }
+      if (bg !== 'Unknown' && bg !== 'N/A' && bg !== '') {
+        summary.totalDonors += count;
+      }
+    });
+
+    res.json(summary);
+  } catch (error) {
+    console.error('Error fetching blood bank summary:', error);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+// ==========================================
+// AUTOMATED BIRTHDAY EMAIL SERVICE & APIS
+// ==========================================
+
+// Helper: Get SMTP Transporter
+const getEmailTransporter = () => {
+  const host = process.env.SMTP_HOST || 'smtp.gmail.com';
+  const port = parseInt(process.env.SMTP_PORT || '587', 10);
+  const user = process.env.SMTP_USER || '';
+  const pass = process.env.SMTP_PASS || '';
+  const secure = process.env.SMTP_SECURE === 'true' || port === 465;
+
+  if (!user || !pass) {
+    return null;
+  }
+
+  return nodemailer.createTransport({
+    host,
+    port,
+    secure,
+    auth: { user, pass },
+    tls: { rejectUnauthorized: false }
+  });
+};
+
+// Helper: Generate celebratory HTML Birthday Greeting Card
+const generateBirthdayHtml = (contact) => {
+  const name = contact.account_name || 'Esteemed Member';
+  const accCode = contact.acc_code || '';
+  const currentYear = new Date().getFullYear();
+
+  return `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Happy Birthday!</title>
+  <style>
+    body { margin: 0; padding: 0; background-color: #0f172a; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; }
+    .container { max-width: 600px; margin: 30px auto; background: #1e293b; border-radius: 16px; overflow: hidden; border: 1px solid #334155; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
+    .header { background: linear-gradient(135deg, #4f46e5, #06b6d4); padding: 40px 20px; text-align: center; color: #ffffff; }
+    .header h1 { margin: 0; font-size: 32px; font-weight: 800; letter-spacing: -0.5px; }
+    .header p { margin: 8px 0 0; font-size: 16px; opacity: 0.9; }
+    .badge { display: inline-block; background: rgba(255,255,255,0.2); padding: 4px 12px; border-radius: 20px; font-size: 12px; font-weight: 600; margin-top: 10px; text-transform: uppercase; }
+    .content { padding: 36px 30px; color: #e2e8f0; line-height: 1.7; font-size: 16px; }
+    .greeting { font-size: 22px; font-weight: 700; color: #38bdf8; margin-bottom: 16px; }
+    .highlight-box { background: rgba(56, 189, 248, 0.08); border-left: 4px solid #38bdf8; padding: 16px 20px; border-radius: 0 8px 8px 0; margin: 24px 0; color: #f1f5f9; font-style: italic; }
+    .footer { background: #0f172a; padding: 24px 20px; text-align: center; color: #64748b; font-size: 13px; border-top: 1px solid #334155; }
+    .footer strong { color: #94a3b8; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div style="font-size: 48px; margin-bottom: 10px;">🎂✨🎉</div>
+      <h1>HAPPY BIRTHDAY!</h1>
+      <p>Wishing you joy, good health, and success!</p>
+      ${accCode ? `<span class="badge">Member ID: ${accCode}</span>` : ''}
+    </div>
+    <div class="content">
+      <div class="greeting">Dear ${name},</div>
+      <p>On this wonderful milestone occasion of your birthday, we extend our heartfelt felicitations, warmest wishes, and deepest appreciation to you!</p>
+      
+      <div class="highlight-box">
+        "May this year bring you boundless happiness, enduring vitality, great accomplishments, and peace in all your endeavors."
+      </div>
+      
+      <p>Your esteemed presence and active partnership remain an invaluable source of pride and fellowship within our Indian community in Sharjah and across the UAE.</p>
+      <p>Celebrate this special day joyfully with your loved ones!</p>
+      
+      <p style="margin-top: 30px; margin-bottom: 0;">
+        Warm regards & best wishes,<br>
+        <strong>Indian Association Sharjah (IAS) Community & Outreach Team</strong>
+      </p>
+    </div>
+    <div class="footer">
+      <p style="margin: 0 0 6px 0;"><strong>Indian Association Sharjah</strong> • Member Felicitation Services</p>
+      <p style="margin: 0;">P.O. Box 5733, Sharjah, United Arab Emirates &copy; ${currentYear}</p>
+    </div>
+  </div>
+</body>
+</html>
+  `;
+};
+
+// Helper: Get today's Day & Month (DD/MM)
+const getTodayDayMonth = () => {
+  const now = new Date();
+  const day = String(now.getDate()).padStart(2, '0');
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  return { day, month, ddmm: `${day}/${month}`, currentYear: now.getFullYear() };
+};
+
+// Helper: Find contacts with birthdays today
+const findTodayBirthdays = async () => {
+  const { ddmm } = getTodayDayMonth();
+  const allContacts = await query(`
+    SELECT id, s_no, acc_code, account_name, mobile_number, email_id, 
+           date_of_birth, date_of_join, blood_group, photo_filename, birthday_sent_year,
+           district, emirate, area
+    FROM contacts
+    WHERE account_status != 'Inactive'
+      AND date_of_birth IS NOT NULL
+      AND date_of_birth != ''
+      AND date_of_birth != 'N/A'
+    ORDER BY account_name ASC
+  `);
+
+  return allContacts.filter(c => {
+    const dob = (c.date_of_birth || '').trim();
+    if (dob.length >= 5) {
+      return dob.substring(0, 5) === ddmm;
+    }
+    return false;
+  });
+};
+
+// GET contacts having birthdays today
+app.get('/api/birthdays/today', async (req, res) => {
+  try {
+    const { currentYear } = getTodayDayMonth();
+    const todayList = await findTodayBirthdays();
+    
+    const enriched = todayList.map(c => ({
+      ...c,
+      birthdaySentThisYear: Number(c.birthday_sent_year || 0) === currentYear,
+      hasEmail: !!(c.email_id && c.email_id.includes('@'))
+    }));
+
+    res.json({
+      date: getTodayDayMonth().ddmm,
+      currentYear,
+      totalToday: enriched.length,
+      sentCount: enriched.filter(c => c.birthdaySentThisYear).length,
+      pendingCount: enriched.filter(c => !c.birthdaySentThisYear && c.hasEmail).length,
+      noEmailCount: enriched.filter(c => !c.hasEmail).length,
+      members: enriched
+    });
+  } catch (error) {
+    console.error('Error fetching today birthdays:', error);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+// GET upcoming birthdays (next 30 days)
+app.get('/api/birthdays/upcoming', async (req, res) => {
+  try {
+    const allContacts = await query(`
+      SELECT id, s_no, acc_code, account_name, mobile_number, email_id, 
+             date_of_birth, date_of_join, blood_group, photo_filename, birthday_sent_year,
+             district, emirate, area
+      FROM contacts
+      WHERE account_status != 'Inactive'
+        AND date_of_birth IS NOT NULL
+        AND date_of_birth != ''
+        AND date_of_birth != 'N/A'
+    `);
+
+    const now = new Date();
+    const currentYear = now.getFullYear();
+    const upcoming = [];
+
+    for (const c of allContacts) {
+      const dob = (c.date_of_birth || '').trim();
+      const parts = dob.split('/');
+      if (parts.length >= 2) {
+        const d = parseInt(parts[0], 10);
+        const m = parseInt(parts[1], 10) - 1; // 0-indexed month
+        if (!isNaN(d) && !isNaN(m)) {
+          let bdayThisYear = new Date(currentYear, m, d);
+          // If birthday already passed this year, check next year
+          if (bdayThisYear < new Date(now.getFullYear(), now.getMonth(), now.getDate())) {
+            bdayThisYear = new Date(currentYear + 1, m, d);
+          }
+          const diffDays = Math.ceil((bdayThisYear - now) / (1000 * 60 * 60 * 24));
+          if (diffDays >= 0 && diffDays <= 30) {
+            upcoming.push({
+              ...c,
+              daysUntil: diffDays,
+              nextBirthdayDate: `${String(d).padStart(2, '0')}/${String(m + 1).padStart(2, '0')}`
+            });
+          }
+        }
+      }
+    }
+
+    upcoming.sort((a, b) => a.daysUntil - b.daysUntil);
+    res.json(upcoming.slice(0, 50));
+  } catch (error) {
+    console.error('Error fetching upcoming birthdays:', error);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+// Helper: Send single birthday email
+const sendBirthdayEmailToContact = async (contact) => {
+  const transporter = getEmailTransporter();
+  if (!transporter) {
+    throw new Error('SMTP credentials are not configured. Please set SMTP_USER and SMTP_PASS.');
+  }
+
+  if (!contact.email_id || !contact.email_id.includes('@')) {
+    throw new Error(`Contact "${contact.account_name}" does not have a valid email address.`);
+  }
+
+  const fromEmail = process.env.SMTP_FROM || process.env.SMTP_USER || 'noreply@iascampaign.com';
+  const htmlContent = generateBirthdayHtml(contact);
+
+  const mailOptions = {
+    from: `"Indian Association Sharjah" <${fromEmail}>`,
+    to: contact.email_id,
+    subject: `🎂 Happy Birthday ${contact.account_name}! Warm Wishes from Indian Association Sharjah`,
+    html: htmlContent
+  };
+
+  const info = await transporter.sendMail(mailOptions);
+  const currentYear = new Date().getFullYear();
+  await run('UPDATE contacts SET birthday_sent_year = ? WHERE id = ?', [currentYear, contact.id]);
+
+  return { success: true, messageId: info.messageId, recipient: contact.email_id };
+};
+
+// POST send birthday emails to all pending celebrants today
+const autoSendTodayBirthdays = async () => {
+  const transporter = getEmailTransporter();
+  if (!transporter) {
+    console.log('[Birthday Engine] SMTP not configured. Skipping auto-dispatch.');
+    return { skipped: true, reason: 'SMTP credentials missing' };
+  }
+
+  const { currentYear } = getTodayDayMonth();
+  const todayMembers = await findTodayBirthdays();
+  const pendingMembers = todayMembers.filter(
+    c => Number(c.birthday_sent_year || 0) < currentYear && c.email_id && c.email_id.includes('@')
+  );
+
+  console.log(`[Birthday Engine] Found ${todayMembers.length} birthdays today (${pendingMembers.length} pending auto-email).`);
+
+  const results = { sent: 0, failed: 0, errors: [] };
+
+  for (const contact of pendingMembers) {
+    try {
+      await sendBirthdayEmailToContact(contact);
+      results.sent++;
+      console.log(`[Birthday Engine] Sent birthday greeting to ${contact.account_name} (${contact.email_id})`);
+    } catch (err) {
+      results.failed++;
+      results.errors.push({ name: contact.account_name, error: err.message });
+      console.error(`[Birthday Engine] Failed for ${contact.account_name}:`, err.message);
+    }
+  }
+
+  return results;
+};
+
+// POST trigger today's birthday emails manually
+app.post('/api/birthdays/send-today', async (req, res) => {
+  try {
+    const results = await autoSendTodayBirthdays();
+    res.json({ success: true, ...results });
+  } catch (error) {
+    console.error('Error executing send-today birthdays:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST send birthday email to a single contact
+app.post('/api/birthdays/send-single/:id', async (req, res) => {
+  const { id } = req.params;
+  try {
+    const [contact] = await query('SELECT * FROM contacts WHERE id = ?', [id]);
+    if (!contact) {
+      return res.status(404).json({ error: 'Contact not found' });
+    }
+
+    const result = await sendBirthdayEmailToContact(contact);
+    res.json(result);
+  } catch (error) {
+    console.error('Error sending single birthday email:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST send test birthday email
+app.post('/api/birthdays/test-email', async (req, res) => {
+  const { testEmail } = req.body;
+  if (!testEmail || !testEmail.includes('@')) {
+    return res.status(400).json({ error: 'A valid testEmail address is required.' });
+  }
+
+  try {
+    const transporter = getEmailTransporter();
+    if (!transporter) {
+      return res.status(400).json({ error: 'SMTP credentials are not configured. Please set SMTP_USER and SMTP_PASS.' });
+    }
+
+    const mockContact = {
+      account_name: 'Distinguished Member (Test Preview)',
+      acc_code: 'L9999',
+      email_id: testEmail
+    };
+
+    const fromEmail = process.env.SMTP_FROM || process.env.SMTP_USER || 'noreply@iascampaign.com';
+    const htmlContent = generateBirthdayHtml(mockContact);
+
+    const info = await transporter.sendMail({
+      from: `"Indian Association Sharjah" <${fromEmail}>`,
+      to: testEmail,
+      subject: `🎂 [Test Preview] Happy Birthday! Warm Wishes from Indian Association Sharjah`,
+      html: htmlContent
+    });
+
+    res.json({ success: true, messageId: info.messageId, recipient: testEmail });
+  } catch (error) {
+    console.error('Error sending test birthday email:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// GET email / SMTP settings status
+app.get('/api/email/settings', (req, res) => {
+  const isConfigured = !!(process.env.SMTP_USER && process.env.SMTP_PASS);
+  res.json({
+    isConfigured,
+    host: process.env.SMTP_HOST || 'smtp.gmail.com',
+    port: process.env.SMTP_PORT || '587',
+    user: process.env.SMTP_USER ? process.env.SMTP_USER.replace(/(.{2})(.*)(@.*)/, '$1***$3') : '',
+    from: process.env.SMTP_FROM || ''
+  });
+});
+
+// POST update email / SMTP settings in .env
+app.post('/api/email/settings', (req, res) => {
+  const { host, port, user, pass, from } = req.body;
+  try {
+    const envPath = path.join(__dirname, '.env');
+    let envContent = fs.existsSync(envPath) ? fs.readFileSync(envPath, 'utf8') : '';
+
+    const updateOrAdd = (key, val) => {
+      if (val === undefined || val === null) return;
+      const regex = new RegExp(`^${key}=.*$`, 'm');
+      if (regex.test(envContent)) {
+        envContent = envContent.replace(regex, `${key}=${val}`);
+      } else {
+        envContent += `\n${key}=${val}`;
+      }
+      process.env[key] = String(val);
+    };
+
+    if (host) updateOrAdd('SMTP_HOST', host.trim());
+    if (port) updateOrAdd('SMTP_PORT', String(port).trim());
+    if (user) updateOrAdd('SMTP_USER', user.trim());
+    if (pass) updateOrAdd('SMTP_PASS', pass.trim());
+    if (from) updateOrAdd('SMTP_FROM', from.trim());
+
+    fs.writeFileSync(envPath, envContent.trim() + '\n', 'utf8');
+    res.json({ success: true, isConfigured: !!(process.env.SMTP_USER && process.env.SMTP_PASS) });
+  } catch (err) {
+    console.error('Error saving email settings:', err);
+    res.status(500).json({ error: 'Failed to update settings' });
+  }
+});
+
+// Setup automated daily birthday check at 08:00 AM
+try {
+  cron.schedule('0 8 * * *', async () => {
+    console.log('[CRON] Running daily automated birthday email check at 08:00 AM...');
+    await autoSendTodayBirthdays();
+  });
+  console.log('[CRON] Automated Daily Birthday Email Scheduler initialized (08:00 AM daily).');
+} catch (cronErr) {
+  console.warn('[CRON] Could not start cron scheduler:', cronErr.message);
+}
+
+// Initial check 15 seconds after startup
+setTimeout(() => {
+  console.log('[Startup Check] Checking for any unsent birthdays for today...');
+  autoSendTodayBirthdays().catch(err => console.log('[Startup Birthday Check Note]:', err.message));
+}, 15000);
 
 app.listen(PORT, () => {
   console.log(`Campaign Tracker Backend listening on http://localhost:${PORT}`);

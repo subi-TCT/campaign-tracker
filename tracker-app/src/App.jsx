@@ -1027,6 +1027,10 @@ export default function App() {
       'AccountName',
       'Mobile Number',
       'Email ID',
+      'Date of Birth',
+      'Date of Join',
+      'Blood Group',
+      'Photo Filename',
       'District',
       'Area',
       'Emirate',
@@ -1043,6 +1047,10 @@ export default function App() {
         'Muhammed Rashid',
         '971501234567',
         'rashid@example.com',
+        '15/04/1982',
+        '10/01/2012',
+        'B+',
+        'Muhammed Rashid_L190.png',
         'KOZHIKODE',
         'CITY',
         'Dubai',
@@ -1057,6 +1065,10 @@ export default function App() {
         'Priya Nair',
         '0509876543',
         'priya@example.com',
+        '22/08/1986',
+        '15/03/2015',
+        'O+',
+        'Priya Nair_L191.png',
         'ERNAKULAM',
         'ALUVA',
         'Sharjah',
@@ -1070,6 +1082,10 @@ export default function App() {
         'L192',
         'Abdul Kareem',
         '+971 50 555 1234',
+        '',
+        '11/12/1975',
+        '05/06/2008',
+        'A+',
         '',
         'MALAPPURAM',
         'MANJERI',
@@ -1104,6 +1120,10 @@ export default function App() {
         { wch: 25 }, // AccountName
         { wch: 18 }, // Mobile Number
         { wch: 25 }, // Email ID
+        { wch: 16 }, // Date of Birth
+        { wch: 16 }, // Date of Join
+        { wch: 14 }, // Blood Group
+        { wch: 28 }, // Photo Filename
         { wch: 18 }, // District
         { wch: 16 }, // Area
         { wch: 14 }, // Emirate
@@ -1120,6 +1140,56 @@ export default function App() {
     }
   };
 
+  // Helper to parse Excel dates (handles serial numbers, strings, and JS dates)
+  const formatExcelDate = (val) => {
+    if (!val && val !== 0) return '';
+    if (typeof val === 'number') {
+      if (val > 1000 && val < 100000) {
+        try {
+          const date = new Date(Math.round((val - 25569) * 86400 * 1000));
+          const d = String(date.getUTCDate()).padStart(2, '0');
+          const m = String(date.getUTCMonth() + 1).padStart(2, '0');
+          const y = date.getUTCFullYear();
+          return `${d}/${m}/${y}`;
+        } catch (e) {
+          return String(val);
+        }
+      }
+      return String(val);
+    }
+    const str = String(val).trim();
+    if (!str || str.toLowerCase() === 'n/a' || str === '-' || str.toLowerCase() === 'null') return '';
+    if (/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(str)) {
+      const p = str.split('/');
+      return `${p[0].padStart(2, '0')}/${p[1].padStart(2, '0')}/${p[2]}`;
+    }
+    if (/^\d{1,2}-\d{1,2}-\d{4}$/.test(str)) {
+      const p = str.split('-');
+      return `${p[0].padStart(2, '0')}/${p[1].padStart(2, '0')}/${p[2]}`;
+    }
+    if (/^\d{4}-\d{1,2}-\d{1,2}$/.test(str)) {
+      const p = str.split('-');
+      return `${p[2].padStart(2, '0')}/${p[1].padStart(2, '0')}/${p[0]}`;
+    }
+    return str;
+  };
+
+  // Helper to normalize blood group tokens
+  const normalizeBloodGroupStr = (val) => {
+    if (!val) return '';
+    const clean = String(val).trim().toUpperCase().replace(/\s+/g, '');
+    if (clean === 'UNKNOWN' || clean === 'N/A' || clean === 'NONE' || clean === '-' || clean === 'NULL') return 'Unknown';
+    if (clean.includes('O+') || clean.includes('O+VE') || clean.includes('OPOSITIVE') || clean === 'O POSITIVE') return 'O+';
+    if (clean.includes('O-') || clean.includes('O-VE') || clean.includes('ONEGATIVE') || clean === 'O NEGATIVE') return 'O-';
+    if (clean.includes('B+') || clean.includes('B+VE') || clean.includes('BPOSITIVE') || clean === 'B POSITIVE') return 'B+';
+    if (clean.includes('B-') || clean.includes('B-VE') || clean.includes('BNEGATIVE') || clean === 'B NEGATIVE') return 'B-';
+    if (clean.includes('AB+') || clean.includes('AB+VE') || clean.includes('ABPOSITIVE') || clean === 'AB POSITIVE') return 'AB+';
+    if (clean.includes('AB-') || clean.includes('AB-VE') || clean.includes('ABNEGATIVE') || clean === 'AB NEGATIVE') return 'AB-';
+    if (clean.includes('A+') || clean.includes('A+VE') || clean.includes('APOSITIVE') || clean === 'A POSITIVE') return 'A+';
+    if (clean.includes('A-') || clean.includes('A-VE') || clean.includes('ANEGATIVE') || clean === 'A NEGATIVE') return 'A-';
+    return String(val).trim();
+  };
+
   // Helper to normalize imported row keys to standard contact fields
   const normalizeRowKeys = (row) => {
     const normalized = {};
@@ -1128,32 +1198,40 @@ export default function App() {
       const val = row[rawKey];
       if (val === undefined || val === null) continue;
       const strVal = String(val).trim();
-      if (!strVal) continue;
+      if (!strVal || strVal.toLowerCase() === 'n/a' || strVal === '-') continue;
 
-      if (cleanKey === 'acccode' || cleanKey === 'accountcode' || cleanKey === 'memberno' || cleanKey === 'membershipno') {
-        normalized.acc_code = strVal.replace(/\.0$/, '');
-      } else if (cleanKey === 'accountname' || cleanKey === 'name' || cleanKey === 'votername' || cleanKey === 'fullname') {
+      if (cleanKey === 'acccode' || cleanKey === 'accountcode' || cleanKey === 'memberno' || cleanKey === 'membershipno' || cleanKey === 'idno' || cleanKey === 'id' || cleanKey === 'memberid' || cleanKey === 'membershipid' || cleanKey === 'accno' || cleanKey === 'code' || cleanKey === 'acc') {
+        normalized.acc_code = strVal.replace(/\.0$/, '').trim();
+      } else if (cleanKey === 'accountname' || cleanKey === 'name' || cleanKey === 'votername' || cleanKey === 'fullname' || cleanKey === 'membername') {
         normalized.account_name = strVal;
-      } else if (cleanKey === 'mobilenumber' || cleanKey === 'mobile' || cleanKey === 'phone' || cleanKey === 'phonenumber' || cleanKey === 'contactnumber') {
+      } else if (cleanKey === 'mobilenumber' || cleanKey === 'mobile' || cleanKey === 'mob' || cleanKey === 'phone' || cleanKey === 'phonenumber' || cleanKey === 'contactnumber' || cleanKey === 'contno' || cleanKey === 'contactno' || cleanKey === 'contnoindia') {
         normalized.mobile_number = strVal;
       } else if (cleanKey === 'emailid' || cleanKey === 'email' || cleanKey === 'emailaddress') {
         normalized.email_id = strVal;
       } else if (cleanKey === 'district') {
         normalized.district = strVal;
-      } else if (cleanKey === 'area') {
+      } else if (cleanKey === 'area' || cleanKey === 'uaeaddress' || cleanKey === 'address' || cleanKey === 'location') {
         normalized.area = strVal;
       } else if (cleanKey === 'emirate') {
         normalized.emirate = strVal;
-      } else if (cleanKey === 'assignedto' || cleanKey === 'volunteer' || cleanKey === 'assigned') {
+      } else if (cleanKey === 'assignedto' || cleanKey === 'volunteer' || cleanKey === 'assigned' || cleanKey === 'helper') {
         normalized.assigned_to = strVal;
       } else if (cleanKey === 'votersentiment' || cleanKey === 'sentiment' || cleanKey === 'memberreaction' || cleanKey === 'reaction') {
         normalized.member_reaction = strVal;
-      } else if (cleanKey === 'notes' || cleanKey === 'note') {
+      } else if (cleanKey === 'notes' || cleanKey === 'note' || cleanKey === 'remarks' || cleanKey === 'comment') {
         normalized.notes = strVal;
       } else if (cleanKey === 'accountstatus' || cleanKey === 'status') {
         normalized.account_status = strVal;
       } else if (cleanKey === 'sno' || cleanKey === 'slno' || cleanKey === 'serialno') {
         normalized.s_no = parseInt(strVal, 10) || undefined;
+      } else if (cleanKey === 'dateofbirth' || cleanKey === 'dob' || cleanKey === 'birthdate' || cleanKey === 'birth' || cleanKey === 'datebirth') {
+        normalized.date_of_birth = formatExcelDate(val);
+      } else if (cleanKey === 'dateofjoin' || cleanKey === 'doj' || cleanKey === 'joiningdate' || cleanKey === 'dateofjoining' || cleanKey === 'datejoin' || cleanKey === 'joineddate') {
+        normalized.date_of_join = formatExcelDate(val);
+      } else if (cleanKey === 'bloodgroup' || cleanKey === 'blood' || cleanKey === 'bg') {
+        normalized.blood_group = normalizeBloodGroupStr(strVal);
+      } else if (cleanKey === 'photofilename' || cleanKey === 'photo' || cleanKey === 'photoname' || cleanKey === 'image' || cleanKey === 'photofile') {
+        normalized.photo_filename = strVal;
       }
     }
     return normalized;
@@ -1171,11 +1249,13 @@ export default function App() {
         return;
       }
 
-      // Pre-index existing contacts by uppercase acc_code
+      // Pre-index existing contacts by uppercase acc_code (with and without whitespace)
       const existingMap = {};
       (contacts || []).forEach(c => {
         if (c.acc_code) {
-          existingMap[String(c.acc_code).trim().toUpperCase()] = c;
+          const k = String(c.acc_code).trim().toUpperCase();
+          existingMap[k] = c;
+          existingMap[k.replace(/\s+/g, '')] = c;
         }
       });
 
@@ -1186,15 +1266,18 @@ export default function App() {
       for (let i = 0; i < rawRows.length; i++) {
         const normalized = normalizeRowKeys(rawRows[i]);
         if (!normalized.acc_code) {
-          skippedRows.push({ rowNumber: i + 1, reason: 'Missing AccCode', raw: rawRows[i] });
+          skippedRows.push({ rowNumber: i + 1, reason: 'Missing AccCode / ID No', raw: rawRows[i] });
           continue;
         }
 
-        const cleanAccCode = normalized.acc_code.toUpperCase();
-        const existing = existingMap[cleanAccCode];
+        const rawAcc = normalized.acc_code.toUpperCase().trim();
+        const existing = existingMap[rawAcc] || existingMap[rawAcc.replace(/\s+/g, '')];
 
         if (existing) {
-          // Detect changes
+          // Normalize to existing database AccCode format (e.g. L19 instead of L 19)
+          normalized.acc_code = existing.acc_code;
+
+          // Detect changes across all cells
           const changes = [];
           
           if (normalized.account_name && normalized.account_name !== existing.account_name) {
@@ -1234,9 +1317,21 @@ export default function App() {
           if (normalized.s_no && normalized.s_no !== existing.s_no) {
             changes.push({ field: 'S.No', oldVal: existing.s_no || 0, newVal: normalized.s_no });
           }
+          if (normalized.date_of_birth && normalized.date_of_birth !== existing.date_of_birth) {
+            changes.push({ field: 'DOB', oldVal: existing.date_of_birth || '(empty)', newVal: normalized.date_of_birth });
+          }
+          if (normalized.date_of_join && normalized.date_of_join !== existing.date_of_join) {
+            changes.push({ field: 'DOJ', oldVal: existing.date_of_join || '(empty)', newVal: normalized.date_of_join });
+          }
+          if (normalized.blood_group && normalized.blood_group !== existing.blood_group) {
+            changes.push({ field: 'Blood Group', oldVal: existing.blood_group || '(empty)', newVal: normalized.blood_group });
+          }
+          if (normalized.photo_filename && normalized.photo_filename !== existing.photo_filename) {
+            changes.push({ field: 'Photo', oldVal: existing.photo_filename || '(empty)', newVal: normalized.photo_filename });
+          }
 
           matchedRows.push({
-            accCode: normalized.acc_code,
+            accCode: existing.acc_code,
             name: normalized.account_name || existing.account_name || 'Unnamed',
             existingContact: existing,
             normalized,
@@ -1256,7 +1351,7 @@ export default function App() {
       }
 
       if (matchedRows.length === 0 && newRows.length === 0) {
-        setMasterImportError('No valid contacts found. Please ensure your file has an "AccCode" column.');
+        setMasterImportError('No valid contacts found. Please ensure your file has an "AccCode" or "ID No" column.');
         setIsAnalyzingMaster(false);
         return;
       }
@@ -1298,7 +1393,7 @@ export default function App() {
           const workbook = XLSX.read(data, { type: 'array' });
           const firstSheetName = workbook.SheetNames[0];
           const worksheet = workbook.Sheets[firstSheetName];
-          const json = XLSX.utils.sheet_to_json(worksheet, { defval: '' });
+          const json = XLSX.utils.sheet_to_json(worksheet, { defval: '', raw: false });
           runMasterAnalysis(json);
         } catch (err) {
           console.error('Error reading Excel file:', err);
@@ -1313,7 +1408,7 @@ export default function App() {
           const workbook = XLSX.read(text, { type: 'string' });
           const firstSheetName = workbook.SheetNames[0];
           const worksheet = workbook.Sheets[firstSheetName];
-          const json = XLSX.utils.sheet_to_json(worksheet, { defval: '' });
+          const json = XLSX.utils.sheet_to_json(worksheet, { defval: '', raw: false });
           runMasterAnalysis(json);
         } catch (err) {
           console.error('Error reading CSV text:', err);
@@ -1335,7 +1430,7 @@ export default function App() {
       const workbook = XLSX.read(masterImportRawText, { type: 'string' });
       const firstSheetName = workbook.SheetNames[0];
       const worksheet = workbook.Sheets[firstSheetName];
-      const json = XLSX.utils.sheet_to_json(worksheet, { defval: '' });
+      const json = XLSX.utils.sheet_to_json(worksheet, { defval: '', raw: false });
       if (json.length === 0) {
         setMasterImportError('No valid rows found. Please ensure your pasted content has header columns (e.g. AccCode, Name, Mobile...).');
         return;

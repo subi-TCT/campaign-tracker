@@ -671,7 +671,9 @@ app.post('/api/contacts/bulk-import', async (req, res) => {
     const existingMap = new Map();
     for (const c of existingList) {
       if (c.acc_code) {
-        existingMap.set(String(c.acc_code).trim().toUpperCase(), c);
+        const key = String(c.acc_code).trim().toUpperCase();
+        existingMap.set(key, c);
+        existingMap.set(key.replace(/\s+/g, ''), c);
       }
     }
 
@@ -679,6 +681,54 @@ app.post('/api/contacts/bulk-import', async (req, res) => {
     let insertedCount = 0;
     let unchangedCount = 0;
     let skippedNoCode = 0;
+
+    const formatExcelDate = (val) => {
+      if (!val && val !== 0) return '';
+      if (typeof val === 'number') {
+        if (val > 1000 && val < 100000) {
+          try {
+            const date = new Date(Math.round((val - 25569) * 86400 * 1000));
+            const d = String(date.getUTCDate()).padStart(2, '0');
+            const m = String(date.getUTCMonth() + 1).padStart(2, '0');
+            const y = date.getUTCFullYear();
+            return `${d}/${m}/${y}`;
+          } catch (e) {
+            return String(val);
+          }
+        }
+        return String(val);
+      }
+      const str = String(val).trim();
+      if (!str || str.toLowerCase() === 'n/a' || str === '-' || str.toLowerCase() === 'null') return '';
+      if (/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(str)) {
+        const p = str.split('/');
+        return `${p[0].padStart(2, '0')}/${p[1].padStart(2, '0')}/${p[2]}`;
+      }
+      if (/^\d{1,2}-\d{1,2}-\d{4}$/.test(str)) {
+        const p = str.split('-');
+        return `${p[0].padStart(2, '0')}/${p[1].padStart(2, '0')}/${p[2]}`;
+      }
+      if (/^\d{4}-\d{1,2}-\d{1,2}$/.test(str)) {
+        const p = str.split('-');
+        return `${p[2].padStart(2, '0')}/${p[1].padStart(2, '0')}/${p[0]}`;
+      }
+      return str;
+    };
+
+    const normalizeBloodGroupStr = (val) => {
+      if (!val) return '';
+      const clean = String(val).trim().toUpperCase().replace(/\s+/g, '');
+      if (clean === 'UNKNOWN' || clean === 'N/A' || clean === 'NONE' || clean === '-' || clean === 'NULL') return 'Unknown';
+      if (clean.includes('O+') || clean.includes('O+VE') || clean.includes('OPOSITIVE') || clean === 'O POSITIVE') return 'O+';
+      if (clean.includes('O-') || clean.includes('O-VE') || clean.includes('ONEGATIVE') || clean === 'O NEGATIVE') return 'O-';
+      if (clean.includes('B+') || clean.includes('B+VE') || clean.includes('BPOSITIVE') || clean === 'B POSITIVE') return 'B+';
+      if (clean.includes('B-') || clean.includes('B-VE') || clean.includes('BNEGATIVE') || clean === 'B NEGATIVE') return 'B-';
+      if (clean.includes('AB+') || clean.includes('AB+VE') || clean.includes('ABPOSITIVE') || clean === 'AB POSITIVE') return 'AB+';
+      if (clean.includes('AB-') || clean.includes('AB-VE') || clean.includes('ABNEGATIVE') || clean === 'AB NEGATIVE') return 'AB-';
+      if (clean.includes('A+') || clean.includes('A+VE') || clean.includes('APOSITIVE') || clean === 'A POSITIVE') return 'A+';
+      if (clean.includes('A-') || clean.includes('A-VE') || clean.includes('ANEGATIVE') || clean === 'A NEGATIVE') return 'A-';
+      return String(val).trim();
+    };
 
     for (let i = 0; i < incomingContacts.length; i++) {
       const row = incomingContacts[i];
@@ -688,7 +738,8 @@ app.post('/api/contacts/bulk-import', async (req, res) => {
         continue;
       }
 
-      const match = existingMap.get(accCodeRaw.toUpperCase());
+      const cleanAcc = accCodeRaw.toUpperCase().trim();
+      const match = existingMap.get(cleanAcc) || existingMap.get(cleanAcc.replace(/\s+/g, ''));
 
       // Format mobile if provided
       let formattedMobile = undefined;
@@ -710,8 +761,13 @@ app.post('/api/contacts/bulk-import', async (req, res) => {
 
         const checkAndUpdate = (colName, incomingVal, currentVal) => {
           if (incomingVal !== undefined && incomingVal !== null) {
-            const strVal = String(incomingVal).trim();
-            if (strVal && strVal !== String(currentVal || '').trim()) {
+            let strVal = String(incomingVal).trim();
+            if (colName === 'date_of_birth' || colName === 'date_of_join') {
+              strVal = formatExcelDate(incomingVal);
+            } else if (colName === 'blood_group') {
+              strVal = normalizeBloodGroupStr(incomingVal);
+            }
+            if (strVal && strVal.toLowerCase() !== 'n/a' && strVal !== '-' && strVal !== String(currentVal || '').trim()) {
               updates.push(`${colName} = ?`);
               params.push(strVal);
             }
@@ -765,9 +821,9 @@ app.post('/api/contacts/bulk-import', async (req, res) => {
         const notes = row.notes ? String(row.notes).trim() : '';
         const status = row.account_status ? String(row.account_status).trim() : 'Active';
         const sNo = row.s_no ? parseInt(row.s_no, 10) || 0 : 0;
-        const dob = row.date_of_birth ? String(row.date_of_birth).trim() : '';
-        const doj = row.date_of_join ? String(row.date_of_join).trim() : '';
-        const bg = row.blood_group ? String(row.blood_group).trim() : '';
+        const dob = formatExcelDate(row.date_of_birth);
+        const doj = formatExcelDate(row.date_of_join);
+        const bg = normalizeBloodGroupStr(row.blood_group);
         const photo = row.photo_filename ? String(row.photo_filename).trim() : '';
 
         const insertSql = `

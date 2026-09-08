@@ -154,6 +154,7 @@ export default function App() {
   const [masterInsertNew, setMasterInsertNew] = useState(true);
   const [masterSelectedAccCodes, setMasterSelectedAccCodes] = useState([]);
   const [masterImportError, setMasterImportError] = useState('');
+  const [masterImportProgress, setMasterImportProgress] = useState('');
   const [isAnalyzingMaster, setIsAnalyzingMaster] = useState(false);
   const [isExecutingMaster, setIsExecutingMaster] = useState(false);
 
@@ -1457,23 +1458,52 @@ export default function App() {
     }
 
     setIsExecutingMaster(true);
-    try {
-      const res = await fetch(`${API_BASE}/contacts/bulk-import`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contacts: toProcess,
-          insertNew: masterInsertNew
-        })
-      });
+    setMasterImportProgress(`Preparing 0 / ${toProcess.length}...`);
 
-      if (!res.ok) {
-        const errData = await res.json().catch(() => ({}));
-        throw new Error(errData.error || 'Bulk import request failed');
+    try {
+      // Chunk into batches of 150 contacts to prevent HTTP 413 (Payload Too Large) and proxy gateway timeouts
+      const BATCH_SIZE = 150;
+      let totalUpdated = 0;
+      let totalInserted = 0;
+      let totalUnchanged = 0;
+
+      for (let i = 0; i < toProcess.length; i += BATCH_SIZE) {
+        const batch = toProcess.slice(i, i + BATCH_SIZE);
+        const currentProcessed = Math.min(i + batch.length, toProcess.length);
+        setMasterImportProgress(`Importing ${currentProcessed} / ${toProcess.length}...`);
+
+        const res = await fetch(`${API_BASE}/contacts/bulk-import`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contacts: batch,
+            insertNew: masterInsertNew
+          })
+        });
+
+        if (!res.ok) {
+          let errorMsg = `Server returned status ${res.status}`;
+          try {
+            const errText = await res.text();
+            try {
+              const parsed = JSON.parse(errText);
+              if (parsed.error) errorMsg = parsed.error;
+            } catch {
+              if (errText && errText.trim()) {
+                errorMsg += `: ${errText.replace(/<[^>]*>?/gm, '').trim().substring(0, 160)}`;
+              }
+            }
+          } catch (readErr) {}
+          throw new Error(`Batch (${i + 1}-${currentProcessed}) failed: ${errorMsg}`);
+        }
+
+        const result = await res.json();
+        totalUpdated += (result.updated || 0);
+        totalInserted += (result.inserted || 0);
+        totalUnchanged += (result.unchanged || 0);
       }
 
-      const result = await res.json();
-      alert(`Bulk Import Complete!\n\n• Contacts Updated: ${result.updated}\n• New Contacts Inserted: ${result.inserted}\n• Unchanged: ${result.unchanged}`);
+      alert(`Bulk Import Complete!\n\n• Contacts Updated: ${totalUpdated}\n• New Contacts Inserted: ${totalInserted}\n• Unchanged: ${totalUnchanged}`);
 
       // Refresh database contacts
       const refreshedContactsRes = await fetch(`${API_BASE}/contacts`);
@@ -1497,11 +1527,13 @@ export default function App() {
       setMasterImportFileName('');
       setMasterImportError('');
       setMasterSelectedAccCodes([]);
+      setMasterImportProgress('');
     } catch (err) {
       console.error('Bulk import execution error:', err);
       alert('Error during bulk import: ' + err.message);
     } finally {
       setIsExecutingMaster(false);
+      setMasterImportProgress('');
     }
   };
 
@@ -6297,7 +6329,7 @@ export default function App() {
                       style={{ background: '#10b981', borderColor: '#10b981', display: 'inline-flex', alignItems: 'center', gap: 6 }}
                     >
                       {isExecutingMaster ? <RefreshCw size={14} className="spin" /> : <CheckCircle size={14} />}
-                      {isExecutingMaster ? 'Importing...' : `Apply Updates (${masterSelectedAccCodes.length} contacts)`}
+                      {isExecutingMaster ? (masterImportProgress || 'Importing...') : `Apply Updates (${masterSelectedAccCodes.length} contacts)`}
                     </button>
                   </div>
                 </div>

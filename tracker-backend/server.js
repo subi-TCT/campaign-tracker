@@ -28,12 +28,14 @@ app.use(cors({
   credentials: true
 }));
 
-// Capture rawBody for HMAC-SHA256 webhook signature verification
+// Increase body limits to 50mb to safely support bulk imports and webhook payloads
 app.use(express.json({
+  limit: '50mb',
   verify: (req, res, buf) => {
     req.rawBody = buf;
   }
 }));
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
 // Serve member photos statically from extracted_photos directory
 app.use('/photos', express.static(path.join(__dirname, 'extracted_photos')));
@@ -234,45 +236,62 @@ const initPostgresDB = async () => {
           district TEXT,
           assigned_to TEXT DEFAULT 'Unassigned',
           account_status TEXT DEFAULT 'Active',
-          area TEXT
+          area TEXT,
+          date_of_birth TEXT DEFAULT '',
+          date_of_join TEXT DEFAULT '',
+          blood_group TEXT DEFAULT '',
+          photo_filename TEXT DEFAULT '',
+          birthday_sent_year INTEGER DEFAULT 0
         )
       `);
       console.log('PostgreSQL contacts table created.');
     } else {
       console.log('PostgreSQL contacts table is ready.');
+    }
+
+    try {
+      await pgPool.query("ALTER TABLE contacts DROP CONSTRAINT IF EXISTS contacts_acc_code_key");
+    } catch (e) {
+      console.log("Unique constraint contacts_acc_code_key drop note:", e.message);
+    }
+
+    const pgContactCols = [
+      "ALTER TABLE contacts ADD COLUMN IF NOT EXISTS emirate TEXT",
+      "ALTER TABLE contacts ADD COLUMN IF NOT EXISTS district TEXT",
+      "ALTER TABLE contacts ADD COLUMN IF NOT EXISTS assigned_to TEXT DEFAULT 'Unassigned'",
+      "ALTER TABLE contacts ADD COLUMN IF NOT EXISTS account_status TEXT DEFAULT 'Active'",
+      "ALTER TABLE contacts ADD COLUMN IF NOT EXISTS area TEXT",
+      "ALTER TABLE contacts ADD COLUMN IF NOT EXISTS sms_status TEXT DEFAULT 'Pending'",
+      "ALTER TABLE contacts ADD COLUMN IF NOT EXISTS sms_sent_date TEXT DEFAULT ''",
+      "ALTER TABLE contacts ADD COLUMN IF NOT EXISTS date_of_birth TEXT DEFAULT ''",
+      "ALTER TABLE contacts ADD COLUMN IF NOT EXISTS date_of_join TEXT DEFAULT ''",
+      "ALTER TABLE contacts ADD COLUMN IF NOT EXISTS blood_group TEXT DEFAULT ''",
+      "ALTER TABLE contacts ADD COLUMN IF NOT EXISTS photo_filename TEXT DEFAULT ''",
+      "ALTER TABLE contacts ADD COLUMN IF NOT EXISTS birthday_sent_year INTEGER DEFAULT 0"
+    ];
+    for (const colSql of pgContactCols) {
       try {
-        await pgPool.query("ALTER TABLE contacts DROP CONSTRAINT IF EXISTS contacts_acc_code_key");
-      } catch (e) {
-        console.log("Unique constraint contacts_acc_code_key drop attempted.");
+        await pgPool.query(colSql);
+      } catch (colErr) {
+        console.warn(`[PostgreSQL Migration Note] ${colSql}:`, colErr.message);
       }
-      try {
-        await pgPool.query("ALTER TABLE contacts ADD COLUMN IF NOT EXISTS emirate TEXT");
-        await pgPool.query("ALTER TABLE contacts ADD COLUMN IF NOT EXISTS district TEXT");
-        await pgPool.query("ALTER TABLE contacts ADD COLUMN IF NOT EXISTS assigned_to TEXT DEFAULT 'Unassigned'");
-        await pgPool.query("ALTER TABLE contacts ADD COLUMN IF NOT EXISTS account_status TEXT DEFAULT 'Active'");
-        await pgPool.query("ALTER TABLE contacts ADD COLUMN IF NOT EXISTS area TEXT");
-        await pgPool.query("ALTER TABLE contacts ADD COLUMN IF NOT EXISTS sms_status TEXT DEFAULT 'Pending'");
-        await pgPool.query("ALTER TABLE contacts ADD COLUMN IF NOT EXISTS sms_sent_date TEXT DEFAULT ''");
-        await pgPool.query("ALTER TABLE contacts ADD COLUMN IF NOT EXISTS date_of_birth TEXT DEFAULT ''");
-        await pgPool.query("ALTER TABLE contacts ADD COLUMN IF NOT EXISTS date_of_join TEXT DEFAULT ''");
-        await pgPool.query("ALTER TABLE contacts ADD COLUMN IF NOT EXISTS blood_group TEXT DEFAULT ''");
-        await pgPool.query("ALTER TABLE contacts ADD COLUMN IF NOT EXISTS photo_filename TEXT DEFAULT ''");
-        await pgPool.query("ALTER TABLE contacts ADD COLUMN IF NOT EXISTS birthday_sent_year INTEGER DEFAULT 0");
-        await pgPool.query(`
-          CREATE TABLE IF NOT EXISTS incoming_sms (
-            id SERIAL PRIMARY KEY,
-            sms_id TEXT,
-            sender TEXT,
-            contact_id INTEGER,
-            contact_name TEXT,
-            message TEXT,
-            received_at TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-          )
-        `);
-      } catch (migrateErr) {
-        console.log("PostgreSQL schema migrations ran successfully.");
-      }
+    }
+
+    try {
+      await pgPool.query(`
+        CREATE TABLE IF NOT EXISTS incoming_sms (
+          id SERIAL PRIMARY KEY,
+          sms_id TEXT,
+          sender TEXT,
+          contact_id INTEGER,
+          contact_name TEXT,
+          message TEXT,
+          received_at TEXT,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+    } catch (smsErr) {
+      console.warn('PostgreSQL incoming_sms table check note:', smsErr.message);
     }
 
     // Verify row count to decide on pre-seeding
@@ -661,12 +680,7 @@ app.post('/api/contacts/bulk-import', async (req, res) => {
 
   try {
     // 1. Fetch existing contacts to match by acc_code in-memory
-    const existingList = await query(`
-      SELECT id, s_no, acc_code, account_name, mobile_number, email_id,
-             district, area, emirate, assigned_to, member_reaction, notes, account_status,
-             date_of_birth, date_of_join, blood_group, photo_filename
-      FROM contacts
-    `);
+    const existingList = await query(`SELECT * FROM contacts`);
 
     const existingMap = new Map();
     for (const c of existingList) {
@@ -2165,6 +2179,19 @@ setTimeout(() => {
   console.log('[Startup Check] Checking for any unsent birthdays for today...');
   autoSendTodayBirthdays().catch(err => console.log('[Startup Birthday Check Note]:', err.message));
 }, 15000);
+
+// Centralized Express error handler to guarantee JSON responses (e.g. payload too large, malformed JSON)
+app.use((err, req, res, next) => {
+  if (err) {
+    console.error('[Express Middleware Error]:', err.message);
+    const status = err.status || err.statusCode || 500;
+    return res.status(status).json({
+      error: err.message || 'Internal Server Error',
+      type: err.type || err.name || 'Error'
+    });
+  }
+  next();
+});
 
 app.listen(PORT, () => {
   console.log(`Campaign Tracker Backend listening on http://localhost:${PORT}`);

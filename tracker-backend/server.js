@@ -730,17 +730,36 @@ app.post('/api/contacts/bulk-import', async (req, res) => {
     };
 
     const normalizeBloodGroupStr = (val) => {
-      if (!val) return '';
-      const clean = String(val).trim().toUpperCase().replace(/\s+/g, '');
-      if (clean === 'UNKNOWN' || clean === 'N/A' || clean === 'NONE' || clean === '-' || clean === 'NULL') return 'Unknown';
-      if (clean.includes('O+') || clean.includes('O+VE') || clean.includes('OPOSITIVE') || clean === 'O POSITIVE') return 'O+';
-      if (clean.includes('O-') || clean.includes('O-VE') || clean.includes('ONEGATIVE') || clean === 'O NEGATIVE') return 'O-';
-      if (clean.includes('B+') || clean.includes('B+VE') || clean.includes('BPOSITIVE') || clean === 'B POSITIVE') return 'B+';
-      if (clean.includes('B-') || clean.includes('B-VE') || clean.includes('BNEGATIVE') || clean === 'B NEGATIVE') return 'B-';
-      if (clean.includes('AB+') || clean.includes('AB+VE') || clean.includes('ABPOSITIVE') || clean === 'AB POSITIVE') return 'AB+';
-      if (clean.includes('AB-') || clean.includes('AB-VE') || clean.includes('ABNEGATIVE') || clean === 'AB NEGATIVE') return 'AB-';
-      if (clean.includes('A+') || clean.includes('A+VE') || clean.includes('APOSITIVE') || clean === 'A POSITIVE') return 'A+';
-      if (clean.includes('A-') || clean.includes('A-VE') || clean.includes('ANEGATIVE') || clean === 'A NEGATIVE') return 'A-';
+      if (!val && val !== 0) return '';
+      let clean = String(val).trim().toUpperCase();
+      if (clean === 'UNKNOWN' || clean === 'N/A' || clean === 'NONE' || clean === '-' || clean === 'NULL' || clean === 'A N' || clean.includes('@')) {
+        return 'Unknown';
+      }
+
+      clean = clean.replace(/POSITIVE/g, '+').replace(/NEGATIVE/g, '-');
+      clean = clean.replace(/\+VE/g, '+').replace(/-VE/g, '-').replace(/_VE/g, '-');
+      clean = clean.replace(/-V/g, '-').replace(/_V/g, '-');
+      clean = clean.replace(/--/g, '-');
+      clean = clean.replace(/_/g, '-');
+      clean = clean.replace(/\s+/g, '');
+      if (clean.startsWith('0+')) clean = 'O+' + clean.slice(2);
+      if (clean.startsWith('0-')) clean = 'O-' + clean.slice(2);
+
+      // Exact standard match
+      if (['AB+', 'AB-', 'A+', 'A-', 'B+', 'B-', 'O+', 'O-'].includes(clean)) {
+        return clean;
+      }
+
+      // Check AB first to prevent false substring matches on B or A
+      if (clean.includes('AB+') || clean.startsWith('AB+')) return 'AB+';
+      if (clean.includes('AB-') || clean.startsWith('AB-')) return 'AB-';
+      if (clean.includes('A+') || clean.startsWith('A+')) return 'A+';
+      if (clean.includes('A-') || clean.startsWith('A-')) return 'A-';
+      if (clean.includes('B+') || clean.startsWith('B+')) return 'B+';
+      if (clean.includes('B-') || clean.startsWith('B-')) return 'B-';
+      if (clean.includes('O+') || clean.startsWith('O+')) return 'O+';
+      if (clean.includes('O-') || clean.startsWith('O-')) return 'O-';
+
       return String(val).trim();
     };
 
@@ -1799,6 +1818,51 @@ app.get('/api/blood-bank/summary', async (req, res) => {
   }
 });
 
+// Self-healing: Repair any AB+ or AB- members that might have been incorrectly overwritten as B+ or B-
+const repairBloodGroupsFromContactsData = async () => {
+  try {
+    let jsonPath = path.join(__dirname, 'contacts_data.json');
+    if (!fs.existsSync(jsonPath)) {
+      jsonPath = path.join(__dirname, '../contacts_data.json');
+    }
+    if (!fs.existsSync(jsonPath)) return { success: false, reason: 'contacts_data.json not found' };
+
+    const contactsData = JSON.parse(fs.readFileSync(jsonPath, 'utf8'));
+    const abContacts = contactsData.filter(c => c.accCode && (c.blood_group === 'AB+' || c.blood_group === 'AB-'));
+    
+    let repairedCount = 0;
+    for (const c of abContacts) {
+      const rows = await query('SELECT id, blood_group FROM contacts WHERE UPPER(acc_code) = UPPER(?)', [c.accCode.trim()]);
+      if (rows && rows.length > 0) {
+        const currentBg = (rows[0].blood_group || '').trim();
+        if (currentBg !== c.blood_group) {
+          await run('UPDATE contacts SET blood_group = ? WHERE id = ?', [c.blood_group, rows[0].id]);
+          repairedCount++;
+        }
+      }
+    }
+    if (repairedCount > 0) {
+      console.log(`[Self-Healing] Restored true AB+/AB- blood groups for ${repairedCount} members from contacts_data.json`);
+    } else {
+      console.log(`[Self-Healing] All AB+/AB- blood groups verified (${abContacts.length} checked).`);
+    }
+    return { success: true, repairedCount, checked: abContacts.length };
+  } catch (err) {
+    console.warn('[Self-Healing Note] Could not auto-repair blood groups:', err.message);
+    return { success: false, error: err.message };
+  }
+};
+
+// Endpoint to manually or programmatically trigger AB+/AB- restoration
+app.post('/api/blood-bank/repair-ab', async (req, res) => {
+  try {
+    const result = await repairBloodGroupsFromContactsData();
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ==========================================
 // AUTOMATED BIRTHDAY EMAIL SERVICE & APIS
 // ==========================================
@@ -2174,11 +2238,14 @@ try {
   console.warn('[CRON] Could not start cron scheduler:', cronErr.message);
 }
 
-// Initial check 15 seconds after startup
+// Initial check 10 seconds after startup
 setTimeout(() => {
   console.log('[Startup Check] Checking for any unsent birthdays for today...');
   autoSendTodayBirthdays().catch(err => console.log('[Startup Birthday Check Note]:', err.message));
-}, 15000);
+
+  console.log('[Startup Check] Verifying and reconciling AB+/AB- blood groups...');
+  repairBloodGroupsFromContactsData().catch(err => console.log('[Startup Blood Group Reconcile Note]:', err.message));
+}, 10000);
 
 // Centralized Express error handler to guarantee JSON responses (e.g. payload too large, malformed JSON)
 app.use((err, req, res, next) => {

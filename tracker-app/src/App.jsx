@@ -1177,17 +1177,36 @@ export default function App() {
 
   // Helper to normalize blood group tokens
   const normalizeBloodGroupStr = (val) => {
-    if (!val) return '';
-    const clean = String(val).trim().toUpperCase().replace(/\s+/g, '');
-    if (clean === 'UNKNOWN' || clean === 'N/A' || clean === 'NONE' || clean === '-' || clean === 'NULL') return 'Unknown';
-    if (clean.includes('O+') || clean.includes('O+VE') || clean.includes('OPOSITIVE') || clean === 'O POSITIVE') return 'O+';
-    if (clean.includes('O-') || clean.includes('O-VE') || clean.includes('ONEGATIVE') || clean === 'O NEGATIVE') return 'O-';
-    if (clean.includes('B+') || clean.includes('B+VE') || clean.includes('BPOSITIVE') || clean === 'B POSITIVE') return 'B+';
-    if (clean.includes('B-') || clean.includes('B-VE') || clean.includes('BNEGATIVE') || clean === 'B NEGATIVE') return 'B-';
-    if (clean.includes('AB+') || clean.includes('AB+VE') || clean.includes('ABPOSITIVE') || clean === 'AB POSITIVE') return 'AB+';
-    if (clean.includes('AB-') || clean.includes('AB-VE') || clean.includes('ABNEGATIVE') || clean === 'AB NEGATIVE') return 'AB-';
-    if (clean.includes('A+') || clean.includes('A+VE') || clean.includes('APOSITIVE') || clean === 'A POSITIVE') return 'A+';
-    if (clean.includes('A-') || clean.includes('A-VE') || clean.includes('ANEGATIVE') || clean === 'A NEGATIVE') return 'A-';
+    if (!val && val !== 0) return '';
+    let clean = String(val).trim().toUpperCase();
+    if (clean === 'UNKNOWN' || clean === 'N/A' || clean === 'NONE' || clean === '-' || clean === 'NULL' || clean === 'A N' || clean.includes('@')) {
+      return 'Unknown';
+    }
+
+    clean = clean.replace(/POSITIVE/g, '+').replace(/NEGATIVE/g, '-');
+    clean = clean.replace(/\+VE/g, '+').replace(/-VE/g, '-').replace(/_VE/g, '-');
+    clean = clean.replace(/-V/g, '-').replace(/_V/g, '-');
+    clean = clean.replace(/--/g, '-');
+    clean = clean.replace(/_/g, '-');
+    clean = clean.replace(/\s+/g, '');
+    if (clean.startsWith('0+')) clean = 'O+' + clean.slice(2);
+    if (clean.startsWith('0-')) clean = 'O-' + clean.slice(2);
+
+    // Exact standard match
+    if (['AB+', 'AB-', 'A+', 'A-', 'B+', 'B-', 'O+', 'O-'].includes(clean)) {
+      return clean;
+    }
+
+    // Check AB first to prevent false substring matches on B or A
+    if (clean.includes('AB+') || clean.startsWith('AB+')) return 'AB+';
+    if (clean.includes('AB-') || clean.startsWith('AB-')) return 'AB-';
+    if (clean.includes('A+') || clean.startsWith('A+')) return 'A+';
+    if (clean.includes('A-') || clean.startsWith('A-')) return 'A-';
+    if (clean.includes('B+') || clean.startsWith('B+')) return 'B+';
+    if (clean.includes('B-') || clean.startsWith('B-')) return 'B-';
+    if (clean.includes('O+') || clean.startsWith('O+')) return 'O+';
+    if (clean.includes('O-') || clean.startsWith('O-')) return 'O-';
+
     return String(val).trim();
   };
 

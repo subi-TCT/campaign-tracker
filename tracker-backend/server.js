@@ -8,6 +8,10 @@ const axios = require('axios');
 const crypto = require('crypto');
 const nodemailer = require('nodemailer');
 const cron = require('node-cron');
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+
+const JWT_SECRET = process.env.JWT_SECRET || 'ias-election-campaign-tracker-secure-token-secret-key-2026';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -201,6 +205,19 @@ const initPostgresDB = async () => {
       )
     `);
     console.log('PostgreSQL volunteers table schema ready.');
+
+    // 2. Create users table for authentication and RBAC
+    await pgPool.query(`
+      CREATE TABLE IF NOT EXISTS users (
+        id SERIAL PRIMARY KEY,
+        username TEXT UNIQUE NOT NULL,
+        password_hash TEXT NOT NULL,
+        role TEXT NOT NULL DEFAULT 'volunteer',
+        volunteer_name TEXT DEFAULT '',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    console.log('PostgreSQL users table schema ready.');
 
     const checkTable = await pgPool.query(`
       SELECT EXISTS (
@@ -478,6 +495,18 @@ const initSqliteDB = () => {
           if (err) console.error("Error creating SQLite volunteers table:", err.message);
         });
 
+        // Create users table for authentication and RBAC
+        db.run(`CREATE TABLE IF NOT EXISTS users (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          username TEXT UNIQUE NOT NULL,
+          password_hash TEXT NOT NULL,
+          role TEXT NOT NULL DEFAULT 'volunteer',
+          volunteer_name TEXT DEFAULT '',
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )`, (err) => {
+          if (err) console.error("Error creating SQLite users table:", err.message);
+        });
+
         db.run("ALTER TABLE contacts ADD COLUMN emirate TEXT", (alterErr) => {
           if (alterErr && !alterErr.message.includes("duplicate column name")) {
             console.error("Migration error adding emirate:", alterErr.message);
@@ -605,8 +634,206 @@ if (isPostgres) {
   initSqliteDB();
 }
 
+// ==========================================
+// AUTHENTICATION & ACCESS CONTROL (RBAC)
+// ==========================================
+
+// Helper: Auto-initialize default admin account if users table is empty
+const initDefaultAdminUser = async () => {
+  try {
+    const existingUsers = await query("SELECT id FROM users LIMIT 1");
+    if (!existingUsers || existingUsers.length === 0) {
+      console.log('No users found in database. Initializing default admin account...');
+      const defaultUsername = 'admin';
+      const defaultPassword = process.env.ADMIN_PASSWORD || 'admin123';
+      const salt = await bcrypt.genSalt(10);
+      const hash = await bcrypt.hash(defaultPassword, salt);
+      await run("INSERT INTO users (username, password_hash, role, volunteer_name) VALUES (?, ?, ?, ?)", [
+        defaultUsername,
+        hash,
+        'admin',
+        'Campaign Manager'
+      ]);
+      console.log(`[Auth Setup] Default admin initialized: username="${defaultUsername}", password="${defaultPassword}"`);
+    }
+  } catch (err) {
+    console.warn('[Auth Setup Note] User table check:', err.message);
+  }
+};
+
+// Immediately invoke default admin user verification
+initDefaultAdminUser().catch(err => console.log('[Startup Admin User Note]:', err.message));
+
+// Middleware: Authenticate JWT Token from Authorization: Bearer <token>
+const authenticateToken = (req, res, next) => {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1]; // Bearer <token>
+
+  if (!token) {
+    return res.status(401).json({ error: 'Access denied. Please log in to continue.' });
+  }
+
+  jwt.verify(token, JWT_SECRET, (err, user) => {
+    if (err) {
+      return res.status(401).json({ error: 'Session expired or invalid token. Please log in again.' });
+    }
+    req.user = user;
+    next();
+  });
+};
+
+// Middleware: Require Admin role
+const requireAdmin = (req, res, next) => {
+  if (!req.user || req.user.role !== 'admin') {
+    return res.status(403).json({ error: 'Administrative privileges required for this action.' });
+  }
+  next();
+};
+
+// POST /api/auth/login
+app.post('/api/auth/login', async (req, res) => {
+  const { username, password } = req.body;
+  if (!username || !password) {
+    return res.status(400).json({ error: 'Username and password are required' });
+  }
+
+  try {
+    const rows = await query("SELECT * FROM users WHERE LOWER(username) = LOWER(?)", [username.trim()]);
+    if (!rows || rows.length === 0) {
+      return res.status(401).json({ error: 'Invalid username or password' });
+    }
+
+    const user = rows[0];
+    const validPassword = await bcrypt.compare(password, user.password_hash);
+    if (!validPassword) {
+      return res.status(401).json({ error: 'Invalid username or password' });
+    }
+
+    const tokenPayload = {
+      id: user.id,
+      username: user.username,
+      role: user.role,
+      volunteer_name: user.volunteer_name || ''
+    };
+
+    const token = jwt.sign(tokenPayload, JWT_SECRET, { expiresIn: '7d' });
+
+    res.json({
+      success: true,
+      token,
+      user: tokenPayload
+    });
+  } catch (err) {
+    console.error('Error during login:', err);
+    res.status(500).json({ error: 'Authentication error' });
+  }
+});
+
+// GET /api/auth/me
+app.get('/api/auth/me', authenticateToken, async (req, res) => {
+  try {
+    const rows = await query("SELECT id, username, role, volunteer_name, created_at FROM users WHERE id = ?", [req.user.id]);
+    if (!rows || rows.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    res.json({ user: rows[0] });
+  } catch (err) {
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+// POST /api/auth/change-password
+app.post('/api/auth/change-password', authenticateToken, async (req, res) => {
+  const { currentPassword, newPassword } = req.body;
+  if (!currentPassword || !newPassword) {
+    return res.status(400).json({ error: 'Current password and new password are required' });
+  }
+  if (newPassword.length < 6) {
+    return res.status(400).json({ error: 'New password must be at least 6 characters long' });
+  }
+
+  try {
+    const rows = await query("SELECT * FROM users WHERE id = ?", [req.user.id]);
+    if (!rows || rows.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const user = rows[0];
+    const validCurrent = await bcrypt.compare(currentPassword, user.password_hash);
+    if (!validCurrent) {
+      return res.status(400).json({ error: 'Current password is incorrect' });
+    }
+
+    const salt = await bcrypt.genSalt(10);
+    const newHash = await bcrypt.hash(newPassword, salt);
+    await run("UPDATE users SET password_hash = ? WHERE id = ?", [newHash, user.id]);
+
+    res.json({ success: true, message: 'Password updated successfully' });
+  } catch (err) {
+    console.error('Error changing password:', err);
+    res.status(500).json({ error: 'Failed to update password' });
+  }
+});
+
+// GET /api/users (Admin only)
+app.get('/api/users', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const users = await query("SELECT id, username, role, volunteer_name, created_at FROM users ORDER BY username ASC");
+    res.json(users);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch users' });
+  }
+});
+
+// POST /api/users (Admin only)
+app.post('/api/users', authenticateToken, requireAdmin, async (req, res) => {
+  const { username, password, role = 'volunteer', volunteer_name = '' } = req.body;
+  if (!username || !password) {
+    return res.status(400).json({ error: 'Username and password are required' });
+  }
+  if (password.length < 6) {
+    return res.status(400).json({ error: 'Password must be at least 6 characters' });
+  }
+
+  const cleanUsername = username.trim().toLowerCase();
+  try {
+    const match = await query("SELECT id FROM users WHERE LOWER(username) = ?", [cleanUsername]);
+    if (match.length > 0) {
+      return res.status(400).json({ error: 'Username already exists' });
+    }
+
+    const salt = await bcrypt.genSalt(10);
+    const hash = await bcrypt.hash(password, salt);
+    await run("INSERT INTO users (username, password_hash, role, volunteer_name) VALUES (?, ?, ?, ?)", [
+      cleanUsername,
+      hash,
+      role,
+      volunteer_name.trim()
+    ]);
+
+    res.status(201).json({ success: true, username: cleanUsername, role, volunteer_name: volunteer_name.trim() });
+  } catch (err) {
+    console.error('Error creating user:', err);
+    res.status(500).json({ error: 'Failed to create user' });
+  }
+});
+
+// DELETE /api/users/:id (Admin only)
+app.delete('/api/users/:id', authenticateToken, requireAdmin, async (req, res) => {
+  const { id } = req.params;
+  if (parseInt(id, 10) === req.user.id) {
+    return res.status(400).json({ error: 'You cannot delete your own active account' });
+  }
+  try {
+    await run("DELETE FROM users WHERE id = ?", [id]);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to delete user' });
+  }
+});
+
 // GET all volunteers
-app.get('/api/volunteers', async (req, res) => {
+app.get('/api/volunteers', authenticateToken, async (req, res) => {
   try {
     const list = await query("SELECT name FROM volunteers ORDER BY name ASC");
     res.json(list.map(r => r.name));
@@ -616,8 +843,8 @@ app.get('/api/volunteers', async (req, res) => {
   }
 });
 
-// POST add a volunteer
-app.post('/api/volunteers', async (req, res) => {
+// POST add a volunteer (Admin only)
+app.post('/api/volunteers', authenticateToken, requireAdmin, async (req, res) => {
   const { name } = req.body;
   if (!name || !name.trim()) {
     return res.status(400).json({ error: 'Volunteer name is required' });
@@ -636,8 +863,8 @@ app.post('/api/volunteers', async (req, res) => {
   }
 });
 
-// DELETE a volunteer
-app.delete('/api/volunteers/:name', async (req, res) => {
+// DELETE a volunteer (Admin only)
+app.delete('/api/volunteers/:name', authenticateToken, requireAdmin, async (req, res) => {
   const { name } = req.params;
   try {
     await run("DELETE FROM volunteers WHERE name = ?", [name]);
@@ -649,8 +876,8 @@ app.delete('/api/volunteers/:name', async (req, res) => {
   }
 });
 
-// POST bulk assign contacts to volunteer
-app.post('/api/contacts/bulk-assign', async (req, res) => {
+// POST bulk assign contacts to volunteer (Admin only)
+app.post('/api/contacts/bulk-assign', authenticateToken, requireAdmin, async (req, res) => {
   const { ids, assigned_to } = req.body;
   if (!Array.isArray(ids) || ids.length === 0) {
     return res.status(400).json({ error: 'Invalid ids array' });
@@ -671,8 +898,8 @@ app.post('/api/contacts/bulk-assign', async (req, res) => {
   }
 });
 
-// POST bulk import / update contacts matching by acc_code
-app.post('/api/contacts/bulk-import', async (req, res) => {
+// POST bulk import / update contacts matching by acc_code (Admin only)
+app.post('/api/contacts/bulk-import', authenticateToken, requireAdmin, async (req, res) => {
   const { contacts: incomingContacts, insertNew = true } = req.body;
   if (!Array.isArray(incomingContacts) || incomingContacts.length === 0) {
     return res.status(400).json({ error: 'No contacts provided in array' });
@@ -909,7 +1136,7 @@ app.post('/api/contacts/bulk-import', async (req, res) => {
 });
 
 // GET all contacts
-app.get('/api/contacts', async (req, res) => {
+app.get('/api/contacts', authenticateToken, async (req, res) => {
   try {
     const contacts = await query(`
       SELECT id, s_no, acc_code, account_name, mobile_number, email_id, 
@@ -930,8 +1157,8 @@ app.get('/api/contacts', async (req, res) => {
   }
 });
 
-// POST create a new contact
-app.post('/api/contacts', async (req, res) => {
+// POST create a new contact (Admin only)
+app.post('/api/contacts', authenticateToken, requireAdmin, async (req, res) => {
   const { s_no, acc_code, account_name, mobile_number, email_id, area, date_of_birth, date_of_join, blood_group, photo_filename } = req.body;
   try {
     const result = await run(`
@@ -948,7 +1175,7 @@ app.post('/api/contacts', async (req, res) => {
 });
 
 // PUT update contact status
-app.put('/api/contacts/:id', async (req, res) => {
+app.put('/api/contacts/:id', authenticateToken, async (req, res) => {
   const { id } = req.params;
   const {
     account_name,
@@ -1061,7 +1288,7 @@ app.put('/api/contacts/:id', async (req, res) => {
 });
 
 // POST bulk update email status
-app.post('/api/contacts/bulk-email', async (req, res) => {
+app.post('/api/contacts/bulk-email', authenticateToken, async (req, res) => {
   const { ids, status, date } = req.body; // ids: [1, 2, 3], status: 'Sent', date: '2026-08-09'
   if (!Array.isArray(ids) || ids.length === 0) {
     return res.status(400).json({ error: 'Invalid ids array' });
@@ -1083,7 +1310,7 @@ app.post('/api/contacts/bulk-email', async (req, res) => {
 });
 
 // POST bulk update whatsapp status
-app.post('/api/contacts/bulk-whatsapp', async (req, res) => {
+app.post('/api/contacts/bulk-whatsapp', authenticateToken, async (req, res) => {
   const { ids, status, date, sentiment } = req.body;
   if (!Array.isArray(ids) || ids.length === 0) {
     return res.status(400).json({ error: 'Invalid ids array' });
@@ -1123,7 +1350,7 @@ app.post('/api/contacts/bulk-whatsapp', async (req, res) => {
 });
 
 // POST bulk update call status
-app.post('/api/contacts/bulk-call', async (req, res) => {
+app.post('/api/contacts/bulk-call', authenticateToken, async (req, res) => {
   const { ids, status, date } = req.body;
   if (!Array.isArray(ids) || ids.length === 0) {
     return res.status(400).json({ error: 'Invalid ids array' });
@@ -1145,7 +1372,7 @@ app.post('/api/contacts/bulk-call', async (req, res) => {
 });
 
 // POST bulk update voter sentiment
-app.post('/api/contacts/bulk-sentiment', async (req, res) => {
+app.post('/api/contacts/bulk-sentiment', authenticateToken, async (req, res) => {
   const { ids, sentiment } = req.body;
   if (!Array.isArray(ids) || ids.length === 0) {
     return res.status(400).json({ error: 'Invalid ids array' });
@@ -1167,7 +1394,7 @@ app.post('/api/contacts/bulk-sentiment', async (req, res) => {
 });
 
 // GET check if Textbee API key and webhook are configured
-app.get('/api/sms/config', (req, res) => {
+app.get('/api/sms/config', authenticateToken, (req, res) => {
   res.json({
     isConfigured: !!(process.env.TEXTBEE_API_KEY && process.env.TEXTBEE_API_KEY.trim()),
     hasDeviceId: !!(process.env.TEXTBEE_DEVICE_ID && process.env.TEXTBEE_DEVICE_ID.trim()),
@@ -1177,7 +1404,7 @@ app.get('/api/sms/config', (req, res) => {
 });
 
 // POST send single SMS via Textbee
-app.post('/api/sms/send', async (req, res) => {
+app.post('/api/sms/send', authenticateToken, async (req, res) => {
   const { id, mobileNumber, message } = req.body;
   const apiKey = (process.env.TEXTBEE_API_KEY || '').trim();
   const deviceId = (process.env.TEXTBEE_DEVICE_ID || '').trim();
@@ -1250,7 +1477,7 @@ app.post('/api/sms/send', async (req, res) => {
 });
 
 // POST bulk broadcast SMS via Textbee with carrier pacing delay
-app.post('/api/sms/broadcast', async (req, res) => {
+app.post('/api/sms/broadcast', authenticateToken, requireAdmin, async (req, res) => {
   const { ids, messageTemplate, delayMs = 2000 } = req.body;
   const apiKey = (process.env.TEXTBEE_API_KEY || '').trim();
   const deviceId = (process.env.TEXTBEE_DEVICE_ID || '').trim();
@@ -1339,7 +1566,7 @@ app.post('/api/sms/broadcast', async (req, res) => {
 });
 
 // POST bulk update sms status manually
-app.post('/api/contacts/bulk-sms', async (req, res) => {
+app.post('/api/contacts/bulk-sms', authenticateToken, requireAdmin, async (req, res) => {
   const { ids, status, date } = req.body;
   if (!Array.isArray(ids) || ids.length === 0) {
     return res.status(400).json({ error: 'Invalid ids array' });
@@ -1497,7 +1724,7 @@ app.post('/api/sms/webhook', async (req, res) => {
 });
 
 // GET /api/sms/inbox - Retrieve recent incoming SMS messages
-app.get('/api/sms/inbox', async (req, res) => {
+app.get('/api/sms/inbox', authenticateToken, async (req, res) => {
   try {
     const limit = parseInt(req.query.limit, 10) || 50;
     const rows = await query(`
@@ -1513,7 +1740,7 @@ app.get('/api/sms/inbox', async (req, res) => {
 });
 
 // GET campaign analytics / stats
-app.get('/api/stats', async (req, res) => {
+app.get('/api/stats', authenticateToken, async (req, res) => {
   const today = req.query.today || new Date().toISOString().split('T')[0];
   try {
     // Total contacts
@@ -1778,7 +2005,7 @@ app.get('/api/stats', async (req, res) => {
 // ==========================================
 
 // GET blood bank summary statistics
-app.get('/api/blood-bank/summary', async (req, res) => {
+app.get('/api/blood-bank/summary', authenticateToken, async (req, res) => {
   try {
     const rows = await query(`
       SELECT blood_group, count(*) as count 
@@ -1854,7 +2081,7 @@ const repairBloodGroupsFromContactsData = async () => {
 };
 
 // Endpoint to manually or programmatically trigger AB+/AB- restoration
-app.post('/api/blood-bank/repair-ab', async (req, res) => {
+app.post('/api/blood-bank/repair-ab', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const result = await repairBloodGroupsFromContactsData();
     res.json(result);
@@ -1941,7 +2168,7 @@ const syncPhotosWithDatabase = async () => {
 };
 
 // Endpoint to trigger photo synchronization
-app.post('/api/contacts/sync-photos', async (req, res) => {
+app.post('/api/contacts/sync-photos', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const result = await syncPhotosWithDatabase();
     res.json(result);
@@ -1951,7 +2178,7 @@ app.post('/api/contacts/sync-photos', async (req, res) => {
 });
 
 // Endpoint to upload / set an individual contact photo
-app.post('/api/contacts/:id/photo', async (req, res) => {
+app.post('/api/contacts/:id/photo', authenticateToken, async (req, res) => {
   const { id } = req.params;
   const { photoBase64, filename } = req.body;
 
@@ -2002,7 +2229,7 @@ app.post('/api/contacts/:id/photo', async (req, res) => {
 });
 
 // Endpoint to bulk upload photos
-app.post('/api/photos/bulk-upload', async (req, res) => {
+app.post('/api/photos/bulk-upload', authenticateToken, requireAdmin, async (req, res) => {
   const { photos } = req.body;
   if (!Array.isArray(photos) || photos.length === 0) {
     return res.status(400).json({ error: 'photos array is required' });
@@ -2163,7 +2390,7 @@ const findTodayBirthdays = async () => {
 };
 
 // GET contacts having birthdays today
-app.get('/api/birthdays/today', async (req, res) => {
+app.get('/api/birthdays/today', authenticateToken, async (req, res) => {
   try {
     const { currentYear } = getTodayDayMonth();
     const todayList = await findTodayBirthdays();
@@ -2190,7 +2417,7 @@ app.get('/api/birthdays/today', async (req, res) => {
 });
 
 // GET upcoming birthdays (next 30 days)
-app.get('/api/birthdays/upcoming', async (req, res) => {
+app.get('/api/birthdays/upcoming', authenticateToken, async (req, res) => {
   try {
     const allContacts = await query(`
       SELECT id, s_no, acc_code, account_name, mobile_number, email_id, 
@@ -2301,7 +2528,7 @@ const autoSendTodayBirthdays = async () => {
 };
 
 // POST trigger today's birthday emails manually
-app.post('/api/birthdays/send-today', async (req, res) => {
+app.post('/api/birthdays/send-today', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const results = await autoSendTodayBirthdays();
     res.json({ success: true, ...results });
@@ -2312,7 +2539,7 @@ app.post('/api/birthdays/send-today', async (req, res) => {
 });
 
 // POST send birthday email to a single contact
-app.post('/api/birthdays/send-single/:id', async (req, res) => {
+app.post('/api/birthdays/send-single/:id', authenticateToken, async (req, res) => {
   const { id } = req.params;
   try {
     const [contact] = await query('SELECT * FROM contacts WHERE id = ?', [id]);
@@ -2329,7 +2556,7 @@ app.post('/api/birthdays/send-single/:id', async (req, res) => {
 });
 
 // POST send test birthday email
-app.post('/api/birthdays/test-email', async (req, res) => {
+app.post('/api/birthdays/test-email', authenticateToken, requireAdmin, async (req, res) => {
   const { testEmail } = req.body;
   if (!testEmail || !testEmail.includes('@')) {
     return res.status(400).json({ error: 'A valid testEmail address is required.' });
@@ -2365,7 +2592,7 @@ app.post('/api/birthdays/test-email', async (req, res) => {
 });
 
 // GET email / SMTP settings status
-app.get('/api/email/settings', (req, res) => {
+app.get('/api/email/settings', authenticateToken, requireAdmin, (req, res) => {
   const isConfigured = !!(process.env.SMTP_USER && process.env.SMTP_PASS);
   res.json({
     isConfigured,
@@ -2377,7 +2604,7 @@ app.get('/api/email/settings', (req, res) => {
 });
 
 // POST update email / SMTP settings in .env
-app.post('/api/email/settings', (req, res) => {
+app.post('/api/email/settings', authenticateToken, requireAdmin, (req, res) => {
   const { host, port, user, pass, from } = req.body;
   try {
     const envPath = path.join(__dirname, '.env');
@@ -2419,8 +2646,11 @@ try {
   console.warn('[CRON] Could not start cron scheduler:', cronErr.message);
 }
 
-// Initial check 10 seconds after startup
+// Initial check 5 seconds after startup
 setTimeout(() => {
+  console.log('[Startup Check] Verifying default admin user account...');
+  initDefaultAdminUser().catch(err => console.log('[Startup Admin User Note]:', err.message));
+
   console.log('[Startup Check] Checking for any unsent birthdays for today...');
   autoSendTodayBirthdays().catch(err => console.log('[Startup Birthday Check Note]:', err.message));
 

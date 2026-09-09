@@ -5,7 +5,8 @@ import {
   Plus, FileText, Settings, HelpCircle, Save, ExternalLink,
   Sun, Moon, Upload, AlertCircle, X, Vote, Award, BarChart2, Menu,
   Smartphone, Send, Inbox, RefreshCw, Database, Download, MapPin, Copy,
-  Image as ImageIcon, Droplet, Cake, Calendar, Heart
+  Image as ImageIcon, Droplet, Cake, Calendar, Heart,
+  Shield, Lock, LogOut, Key, Eye, EyeOff, UserCheck
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 
@@ -53,6 +54,39 @@ const DEFAULT_TEMPLATES = {
 };
 
 export default function App() {
+  // Phase 1 (Security): Authentication & Access Control States
+  const [authToken, setAuthToken] = useState(() => localStorage.getItem('ias_auth_token') || '');
+  const [currentUser, setCurrentUser] = useState(() => {
+    try {
+      const saved = localStorage.getItem('ias_auth_user');
+      return saved ? JSON.parse(saved) : null;
+    } catch {
+      return null;
+    }
+  });
+  const [loginForm, setLoginForm] = useState({ username: '', password: '' });
+  const [showLoginPassword, setShowLoginPassword] = useState(false);
+  const [loginLoading, setLoginLoading] = useState(false);
+  const [loginError, setLoginError] = useState('');
+
+  // Change Password Modal States
+  const [showChangePasswordModal, setShowChangePasswordModal] = useState(false);
+  const [changePasswordForm, setChangePasswordForm] = useState({ currentPassword: '', newPassword: '', confirmPassword: '' });
+  const [changePasswordLoading, setChangePasswordLoading] = useState(false);
+  const [changePasswordMsg, setChangePasswordMsg] = useState({ type: '', text: '' });
+
+  // User Management Modal States (Admin Only)
+  const [showUserManagementModal, setShowUserManagementModal] = useState(false);
+  const [systemUsers, setSystemUsers] = useState([]);
+  const [newUserForm, setNewUserForm] = useState({ username: '', password: '', role: 'volunteer', volunteer_name: '' });
+  const [userMgmtLoading, setUserMgmtLoading] = useState(false);
+  const [userMgmtMsg, setUserMgmtMsg] = useState({ type: '', text: '' });
+
+  // Role helper constants
+  const isAdmin = currentUser?.role === 'admin';
+  const isVolunteer = currentUser?.role === 'volunteer';
+  const isViewer = currentUser?.role === 'viewer';
+
   const [contacts, setContacts] = useState([]);
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -290,14 +324,189 @@ export default function App() {
     localStorage.setItem('exit_poll_target', exitPollTarget);
   }, [exitPollTarget]);
 
-  // Fetch initial data
+  // Helper: Authenticated fetch wrapper injecting Bearer JWT token
+  const authFetch = async (url, options = {}) => {
+    const token = authToken || localStorage.getItem('ias_auth_token');
+    const headers = {
+      ...(options.headers || {}),
+      ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+    };
+    const response = await fetch(url, { ...options, headers });
+    if (response.status === 401) {
+      localStorage.removeItem('ias_auth_token');
+      localStorage.removeItem('ias_auth_user');
+      setAuthToken('');
+      setCurrentUser(null);
+      setError('Session expired or access denied. Please log in again.');
+    }
+    return response;
+  };
+
+  // Login handler
+  const handleLogin = async (e) => {
+    e.preventDefault();
+    if (!loginForm.username || !loginForm.password) {
+      setLoginError('Please enter both username and password.');
+      return;
+    }
+    setLoginLoading(true);
+    setLoginError('');
+    try {
+      const res = await fetch(`${API_BASE}/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          username: loginForm.username.trim(),
+          password: loginForm.password
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Invalid credentials. Please verify username and password.');
+      }
+      localStorage.setItem('ias_auth_token', data.token);
+      localStorage.setItem('ias_auth_user', JSON.stringify(data.user));
+      setAuthToken(data.token);
+      setCurrentUser(data.user);
+      setLoginForm({ username: '', password: '' });
+      setError(null);
+    } catch (err) {
+      setLoginError(err.message);
+    } finally {
+      setLoginLoading(false);
+    }
+  };
+
+  // Logout handler
+  const handleLogout = () => {
+    localStorage.removeItem('ias_auth_token');
+    localStorage.removeItem('ias_auth_user');
+    setAuthToken('');
+    setCurrentUser(null);
+    setContacts([]);
+    setStats(null);
+    setSelectedVolunteerDetail(null);
+    setSelectedContactIds([]);
+    setLoading(false);
+  };
+
+  // Change password handler
+  const handleChangePassword = async (e) => {
+    e.preventDefault();
+    setChangePasswordMsg({ type: '', text: '' });
+    if (!changePasswordForm.currentPassword || !changePasswordForm.newPassword) {
+      setChangePasswordMsg({ type: 'error', text: 'Please fill in all password fields.' });
+      return;
+    }
+    if (changePasswordForm.newPassword.length < 6) {
+      setChangePasswordMsg({ type: 'error', text: 'New password must be at least 6 characters long.' });
+      return;
+    }
+    if (changePasswordForm.newPassword !== changePasswordForm.confirmPassword) {
+      setChangePasswordMsg({ type: 'error', text: 'New password and confirmation password do not match.' });
+      return;
+    }
+
+    setChangePasswordLoading(true);
+    try {
+      const res = await authFetch(`${API_BASE}/auth/change-password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          currentPassword: changePasswordForm.currentPassword,
+          newPassword: changePasswordForm.newPassword
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to update password.');
+      }
+      setChangePasswordMsg({ type: 'success', text: 'Password updated successfully!' });
+      setChangePasswordForm({ currentPassword: '', newPassword: '', confirmPassword: '' });
+      setTimeout(() => {
+        setShowChangePasswordModal(false);
+        setChangePasswordMsg({ type: '', text: '' });
+      }, 1500);
+    } catch (err) {
+      setChangePasswordMsg({ type: 'error', text: err.message });
+    } finally {
+      setChangePasswordLoading(false);
+    }
+  };
+
+  // Fetch users for User Management (Admin only)
+  const fetchSystemUsers = async () => {
+    try {
+      const res = await authFetch(`${API_BASE}/users`);
+      if (res.ok) {
+        const list = await res.json();
+        setSystemUsers(list || []);
+      }
+    } catch (err) {
+      console.error('Error fetching users:', err);
+    }
+  };
+
+  // Create user handler (Admin only)
+  const handleCreateUser = async (e) => {
+    e.preventDefault();
+    setUserMgmtMsg({ type: '', text: '' });
+    if (!newUserForm.username || !newUserForm.password) {
+      setUserMgmtMsg({ type: 'error', text: 'Username and password are required.' });
+      return;
+    }
+    if (newUserForm.password.length < 6) {
+      setUserMgmtMsg({ type: 'error', text: 'Password must be at least 6 characters long.' });
+      return;
+    }
+
+    setUserMgmtLoading(true);
+    try {
+      const res = await authFetch(`${API_BASE}/users`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newUserForm)
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to create user account.');
+      }
+      setUserMgmtMsg({ type: 'success', text: `User account "${data.username}" created successfully!` });
+      setNewUserForm({ username: '', password: '', role: 'volunteer', volunteer_name: '' });
+      await fetchSystemUsers();
+    } catch (err) {
+      setUserMgmtMsg({ type: 'error', text: err.message });
+    } finally {
+      setUserMgmtLoading(false);
+    }
+  };
+
+  // Delete user handler (Admin only)
+  const handleDeleteUser = async (userId, username) => {
+    if (!window.confirm(`Are you sure you want to delete user account "${username}"?`)) {
+      return;
+    }
+    try {
+      const res = await authFetch(`${API_BASE}/users/${userId}`, { method: 'DELETE' });
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.error || 'Failed to delete user account.');
+      } else {
+        await fetchSystemUsers();
+      }
+    } catch (err) {
+      alert('Error deleting user: ' + err.message);
+    }
+  };
+
+  // Fetch initial data using authenticated fetch
   const fetchData = async () => {
     try {
       setLoading(true);
       const today = getTodayString();
       const [contactsRes, statsRes] = await Promise.all([
-        fetch(`${API_BASE}/contacts`),
-        fetch(`${API_BASE}/stats?today=${today}`)
+        authFetch(`${API_BASE}/contacts`),
+        authFetch(`${API_BASE}/stats?today=${today}`)
       ]);
 
       if (!contactsRes.ok || !statsRes.ok) {
@@ -312,7 +521,7 @@ export default function App() {
       setError(null);
 
       // Query Textbee configuration status
-      fetch(`${API_BASE}/sms/config`)
+      authFetch(`${API_BASE}/sms/config`)
         .then(r => r.ok ? r.json() : null)
         .then(cfg => { if (cfg) setTextbeeConfig(cfg); })
         .catch(() => {});
@@ -333,12 +542,12 @@ export default function App() {
 
   const fetchBirthdays = async () => {
     try {
-      const res = await fetch(`${API_BASE}/birthdays/today`);
+      const res = await authFetch(`${API_BASE}/birthdays/today`);
       if (res.ok) {
         const data = await res.json();
         setTodayBirthdays(data);
       }
-      const upRes = await fetch(`${API_BASE}/birthdays/upcoming`);
+      const upRes = await authFetch(`${API_BASE}/birthdays/upcoming`);
       if (upRes.ok) {
         const upData = await upRes.json();
         setUpcomingBirthdays(upData);
@@ -350,7 +559,7 @@ export default function App() {
 
   const fetchBloodBank = async () => {
     try {
-      const res = await fetch(`${API_BASE}/blood-bank/summary`);
+      const res = await authFetch(`${API_BASE}/blood-bank/summary`);
       if (res.ok) {
         const data = await res.json();
         setBloodBankSummary(data);
@@ -364,7 +573,7 @@ export default function App() {
     setIsSendingBirthdayEmail(true);
     setBirthdayActionMsg('');
     try {
-      const res = await fetch(`${API_BASE}/birthdays/send-today`, { method: 'POST' });
+      const res = await authFetch(`${API_BASE}/birthdays/send-today`, { method: 'POST' });
       const data = await res.json();
       if (res.ok) {
         setBirthdayActionMsg(`🎉 Dispatched! Sent: ${data.sent || 0} greetings, Failed: ${data.failed || 0}`);
@@ -382,7 +591,7 @@ export default function App() {
   const handleSendSingleBirthday = async (contactId, contactName) => {
     setIsSendingBirthdayEmail(true);
     try {
-      const res = await fetch(`${API_BASE}/birthdays/send-single/${contactId}`, { method: 'POST' });
+      const res = await authFetch(`${API_BASE}/birthdays/send-single/${contactId}`, { method: 'POST' });
       const data = await res.json();
       if (res.ok) {
         alert(`🎂 Birthday email greeting successfully delivered to ${contactName}!`);
@@ -399,7 +608,7 @@ export default function App() {
 
   const fetchIncomingSms = async () => {
     try {
-      const res = await fetch(`${API_BASE}/sms/inbox?limit=50`);
+      const res = await authFetch(`${API_BASE}/sms/inbox?limit=50`);
       if (res.ok) {
         const data = await res.json();
         setIncomingSmsList(data || []);
@@ -411,7 +620,7 @@ export default function App() {
 
   const fetchVolunteers = async () => {
     try {
-      const res = await fetch(`${API_BASE}/volunteers`);
+      const res = await authFetch(`${API_BASE}/volunteers`);
       if (res.ok) {
         const data = await res.json();
         setVolunteers(data);
@@ -424,7 +633,7 @@ export default function App() {
   const handleAddVolunteer = async () => {
     if (!newVolunteerName || !newVolunteerName.trim()) return;
     try {
-      const res = await fetch(`${API_BASE}/volunteers`, {
+      const res = await authFetch(`${API_BASE}/volunteers`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: newVolunteerName.trim() })
@@ -447,7 +656,7 @@ export default function App() {
       return;
     }
     try {
-      const res = await fetch(`${API_BASE}/volunteers/${encodeURIComponent(name)}`, {
+      const res = await authFetch(`${API_BASE}/volunteers/${encodeURIComponent(name)}`, {
         method: 'DELETE'
       });
       if (res.ok) {
@@ -465,7 +674,7 @@ export default function App() {
   const handleBulkAssignVolunteers = async (volunteerName) => {
     if (selectedContactIds.length === 0) return;
     try {
-      const res = await fetch(`${API_BASE}/contacts/bulk-assign`, {
+      const res = await authFetch(`${API_BASE}/contacts/bulk-assign`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -486,10 +695,40 @@ export default function App() {
     }
   };
 
+  // Authentication session check and data loading
   useEffect(() => {
-    fetchData();
-    fetchVolunteers();
-  }, []);
+    if (authToken) {
+      fetch(`${API_BASE}/auth/me`, {
+        headers: { 'Authorization': `Bearer ${authToken}` }
+      })
+        .then(res => {
+          if (!res.ok) throw new Error('Token expired');
+          return res.json();
+        })
+        .then(data => {
+          if (data && data.user) {
+            setCurrentUser(data.user);
+            localStorage.setItem('ias_auth_user', JSON.stringify(data.user));
+            fetchData();
+            fetchVolunteers();
+          } else {
+            handleLogout();
+          }
+        })
+        .catch(() => {
+          handleLogout();
+        });
+    } else {
+      setLoading(false);
+    }
+  }, [authToken]);
+
+  // Auto-filter for logged in volunteer callers
+  useEffect(() => {
+    if (currentUser?.role === 'volunteer' && currentUser?.volunteer_name) {
+      setAssignedToFilter(currentUser.volunteer_name);
+    }
+  }, [currentUser]);
 
   // Countdown timer effect
   useEffect(() => {
@@ -538,7 +777,7 @@ export default function App() {
   // Update contact status helper
   const updateContact = async (id, updates) => {
     try {
-      const res = await fetch(`${API_BASE}/contacts/${id}`, {
+      const res = await authFetch(`${API_BASE}/contacts/${id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(updates)
@@ -551,7 +790,7 @@ export default function App() {
       
       // Refresh stats
       const today = getTodayString();
-      const statsRes = await fetch(`${API_BASE}/stats?today=${today}`);
+      const statsRes = await authFetch(`${API_BASE}/stats?today=${today}`);
       if (statsRes.ok) {
         const statsData = await statsRes.json();
         setStats(statsData);
@@ -569,7 +808,7 @@ export default function App() {
     if (ids.length === 0) return;
     try {
       const today = getTodayString();
-      const res = await fetch(`${API_BASE}/contacts/bulk-email`, {
+      const res = await authFetch(`${API_BASE}/contacts/bulk-email`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -595,7 +834,7 @@ export default function App() {
     if (ids.length === 0) return;
     try {
       const today = getTodayString();
-      const res = await fetch(`${API_BASE}/contacts/bulk-call`, {
+      const res = await authFetch(`${API_BASE}/contacts/bulk-call`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -629,7 +868,7 @@ export default function App() {
       if (sentiment && sentiment.trim() && sentiment !== 'Keep Current') {
         payload.sentiment = sentiment;
       }
-      const res = await fetch(`${API_BASE}/contacts/bulk-whatsapp`, {
+      const res = await authFetch(`${API_BASE}/contacts/bulk-whatsapp`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
@@ -650,7 +889,7 @@ export default function App() {
     const ids = idsToUpdate || selectedContactIds;
     if (ids.length === 0) return;
     try {
-      const res = await fetch(`${API_BASE}/contacts/bulk-sentiment`, {
+      const res = await authFetch(`${API_BASE}/contacts/bulk-sentiment`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -675,7 +914,7 @@ export default function App() {
     if (ids.length === 0) return;
     try {
       const today = getTodayString();
-      const res = await fetch(`${API_BASE}/contacts/bulk-sms`, {
+      const res = await authFetch(`${API_BASE}/contacts/bulk-sms`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -705,7 +944,7 @@ export default function App() {
     }
     setIsSendingSms(true);
     try {
-      const res = await fetch(`${API_BASE}/sms/send`, {
+      const res = await authFetch(`${API_BASE}/sms/send`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -736,7 +975,7 @@ export default function App() {
     }
     setIsSendingSms(true);
     try {
-      const res = await fetch(`${API_BASE}/sms/send`, {
+      const res = await authFetch(`${API_BASE}/sms/send`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -783,7 +1022,7 @@ export default function App() {
     });
 
     try {
-      const res = await fetch(`${API_BASE}/sms/broadcast`, {
+      const res = await authFetch(`${API_BASE}/sms/broadcast`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1499,7 +1738,7 @@ export default function App() {
         const currentProcessed = Math.min(i + batch.length, toProcess.length);
         setMasterImportProgress(`Importing ${currentProcessed} / ${toProcess.length}...`);
 
-        const res = await fetch(`${API_BASE}/contacts/bulk-import`, {
+        const res = await authFetch(`${API_BASE}/contacts/bulk-import`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -1533,7 +1772,7 @@ export default function App() {
       alert(`Bulk Import Complete!\n\n• Contacts Updated: ${totalUpdated}\n• New Contacts Inserted: ${totalInserted}\n• Unchanged: ${totalUnchanged}`);
 
       // Refresh database contacts
-      const refreshedContactsRes = await fetch(`${API_BASE}/contacts`);
+      const refreshedContactsRes = await authFetch(`${API_BASE}/contacts`);
       if (refreshedContactsRes.ok) {
         const data = await refreshedContactsRes.json();
         setContacts(data);
@@ -1541,7 +1780,7 @@ export default function App() {
 
       // Refresh stats
       const today = getTodayString();
-      const statsRes = await fetch(`${API_BASE}/stats?today=${today}`);
+      const statsRes = await authFetch(`${API_BASE}/stats?today=${today}`);
       if (statsRes.ok) {
         const statsData = await statsRes.json();
         setStats(statsData);
@@ -1578,7 +1817,7 @@ export default function App() {
     reader.onload = async (event) => {
       const base64Data = event.target.result;
       try {
-        const res = await fetch(`${API_BASE}/contacts/${contactId}/photo`, {
+        const res = await authFetch(`${API_BASE}/contacts/${contactId}/photo`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -1616,7 +1855,7 @@ export default function App() {
     setIsSyncingPhotos(true);
     setSyncPhotoResult(null);
     try {
-      const res = await fetch(`${API_BASE}/contacts/sync-photos`, { method: 'POST' });
+      const res = await authFetch(`${API_BASE}/contacts/sync-photos`, { method: 'POST' });
       if (!res.ok) {
         throw new Error(`Server returned HTTP ${res.status}`);
       }
@@ -1624,7 +1863,7 @@ export default function App() {
       setSyncPhotoResult(data);
 
       // Refresh contacts to display updated photos
-      const refreshed = await fetch(`${API_BASE}/contacts`);
+      const refreshed = await authFetch(`${API_BASE}/contacts`);
       if (refreshed.ok) {
         const contactsList = await refreshed.json();
         setContacts(contactsList);
@@ -1667,7 +1906,7 @@ export default function App() {
         const currentCount = Math.min(i + chunk.length, loadedFiles.length);
         setBulkPhotoProgress(`Uploading ${currentCount} / ${loadedFiles.length} photos...`);
 
-        const res = await fetch(`${API_BASE}/photos/bulk-upload`, {
+        const res = await authFetch(`${API_BASE}/photos/bulk-upload`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ photos: chunk })
@@ -1684,7 +1923,7 @@ export default function App() {
 
       alert(`Photo Upload Complete!\n\n• Photos Uploaded: ${totalSaved}\n• Linked to Member Profiles: ${totalLinked}`);
 
-      const refreshed = await fetch(`${API_BASE}/contacts`);
+      const refreshed = await authFetch(`${API_BASE}/contacts`);
       if (refreshed.ok) {
         const contactsList = await refreshed.json();
         setContacts(contactsList);
@@ -1721,7 +1960,7 @@ export default function App() {
     const nextSNo = contacts.length > 0 ? Math.max(...contacts.map(c => c.s_no || 0)) + 1 : 1;
     
     try {
-      const res = await fetch(`${API_BASE}/contacts`, {
+      const res = await authFetch(`${API_BASE}/contacts`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -2257,6 +2496,104 @@ export default function App() {
     }
   };
 
+  // Phase 1 (Security): Require Login
+  if (!currentUser || !authToken) {
+    return (
+      <div className="login-screen-wrapper">
+        <div className="login-card">
+          <div className="login-brand-header">
+            <div className="login-emblem">
+              <Shield size={14} color="#6366f1" />
+              <span>Official Campaign Portal</span>
+            </div>
+            <h1 className="login-title">Indian Association Sharjah</h1>
+            <p className="login-subtitle">Election Campaign Management System</p>
+          </div>
+
+          <div className="login-candidate-chip">
+            <div className="login-candidate-badge">#3</div>
+            <div className="login-candidate-text">
+              <h4>Anil Kumar K G Pillai</h4>
+              <p>Managing Committee Candidate • Joint 7-Candidate Panel</p>
+            </div>
+          </div>
+
+          {(loginError || error) && (
+            <div className="login-error-banner">
+              <AlertCircle size={16} />
+              <span>{loginError || error}</span>
+            </div>
+          )}
+
+          <form onSubmit={handleLogin} className="login-form">
+            <div className="login-input-group">
+              <label>Username</label>
+              <div className="login-input-wrapper">
+                <Lock size={16} className="login-input-icon" />
+                <input
+                  type="text"
+                  className="login-input"
+                  placeholder="Enter username (e.g. admin)"
+                  value={loginForm.username}
+                  onChange={(e) => setLoginForm({ ...loginForm, username: e.target.value })}
+                  autoFocus
+                  required
+                />
+              </div>
+            </div>
+
+            <div className="login-input-group">
+              <label>Password</label>
+              <div className="login-input-wrapper">
+                <Key size={16} className="login-input-icon" />
+                <input
+                  type={showLoginPassword ? "text" : "password"}
+                  className="login-input"
+                  placeholder="Enter password"
+                  value={loginForm.password}
+                  onChange={(e) => setLoginForm({ ...loginForm, password: e.target.value })}
+                  required
+                />
+                <button
+                  type="button"
+                  className="password-toggle-btn"
+                  onClick={() => setShowLoginPassword(!showLoginPassword)}
+                >
+                  {showLoginPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                </button>
+              </div>
+            </div>
+
+            <button
+              type="submit"
+              className="login-submit-btn"
+              disabled={loginLoading}
+            >
+              {loginLoading ? (
+                <>
+                  <RefreshCw size={16} className="spin" />
+                  <span>Authenticating...</span>
+                </>
+              ) : (
+                <>
+                  <Lock size={16} />
+                  <span>Sign In to Campaign Tracker</span>
+                </>
+              )}
+            </button>
+          </form>
+
+          <div className="login-footer-notes">
+            <p className="login-tip">
+              <strong>Default Admin:</strong> <code>admin</code> / <code>admin123</code>
+            </p>
+            <p className="login-tip">Authorized campaign personnel & volunteer callers only.</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (error) {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100vh', padding: 24, textAlign: 'center', background: '#0b0c10', color: '#f3f4f6' }}>
@@ -2452,12 +2789,63 @@ export default function App() {
             </div>
           </div>
 
-          <div className="countdown-container">
-            <Clock size={16} color="#10b981" />
-            <span className="countdown-label">Time to election:</span>
-            <div className="countdown-clock">
-              {timeLeft.days}d {timeLeft.hours}h {timeLeft.minutes}m {timeLeft.seconds}s
+          <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
+            <div className="countdown-container">
+              <Clock size={16} color="#10b981" />
+              <span className="countdown-label">Time to election:</span>
+              <div className="countdown-clock">
+                {timeLeft.days}d {timeLeft.hours}h {timeLeft.minutes}m {timeLeft.seconds}s
+              </div>
             </div>
+
+            {/* User Profile Badge & Session Controls */}
+            {currentUser && (
+              <div className="user-profile-badge">
+                <div className="user-avatar" title={currentUser.username}>
+                  {(currentUser.username || 'U')[0].toUpperCase()}
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--color-text-white)' }}>
+                      {currentUser.volunteer_name || currentUser.username}
+                    </span>
+                    <span className={`badge-role ${currentUser.role || 'volunteer'}`}>
+                      {currentUser.role === 'admin' ? <Shield size={10} /> : <UserCheck size={10} />}
+                      {currentUser.role}
+                    </span>
+                  </div>
+                </div>
+
+                {isAdmin && (
+                  <button
+                    className="btn"
+                    onClick={() => { setShowUserManagementModal(true); fetchSystemUsers(); }}
+                    title="Manage System User Accounts"
+                    style={{ padding: '4px 8px', fontSize: 11, display: 'inline-flex', alignItems: 'center', gap: 4, background: 'rgba(168, 85, 247, 0.15)', color: '#c084fc', border: '1px solid rgba(168, 85, 247, 0.3)' }}
+                  >
+                    <Users size={12} /> Users
+                  </button>
+                )}
+
+                <button
+                  className="btn"
+                  onClick={() => { setShowChangePasswordModal(true); setChangePasswordMsg({ type: '', text: '' }); }}
+                  title="Change Password"
+                  style={{ padding: '4px 8px', fontSize: 11, display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                >
+                  <Key size={12} /> Password
+                </button>
+
+                <button
+                  className="btn"
+                  onClick={handleLogout}
+                  title="Log Out"
+                  style={{ padding: '4px 8px', fontSize: 11, display: 'inline-flex', alignItems: 'center', gap: 4, background: 'rgba(239, 68, 68, 0.15)', color: '#f87171', border: '1px solid rgba(239, 68, 68, 0.3)' }}
+                >
+                  <LogOut size={12} /> Logout
+                </button>
+              </div>
+            )}
           </div>
         </section>
 
@@ -2488,14 +2876,16 @@ export default function App() {
                       {birthdayActionMsg && (
                         <span style={{ fontSize: 12, fontWeight: 600, color: '#10b981' }}>{birthdayActionMsg}</span>
                       )}
-                      <button 
-                        className="btn primary"
-                        disabled={isSendingBirthdayEmail || todayBirthdays.pendingCount === 0}
-                        onClick={handleSendTodayBirthdays}
-                        style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: 'linear-gradient(135deg, #ec4899, #8b5cf6)', borderColor: 'transparent' }}
-                      >
-                        <Send size={15} /> {isSendingBirthdayEmail ? 'Dispatching...' : `Send Wishes to All (${todayBirthdays.pendingCount})`}
-                      </button>
+                      {isAdmin && (
+                        <button 
+                          className="btn primary"
+                          disabled={isSendingBirthdayEmail || todayBirthdays.pendingCount === 0}
+                          onClick={handleSendTodayBirthdays}
+                          style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: 'linear-gradient(135deg, #ec4899, #8b5cf6)', borderColor: 'transparent' }}
+                        >
+                          <Send size={15} /> {isSendingBirthdayEmail ? 'Dispatching...' : `Send Wishes to All (${todayBirthdays.pendingCount})`}
+                        </button>
+                      )}
                     </div>
                   </div>
 
@@ -4139,14 +4529,16 @@ export default function App() {
                       {selectedContactIds.length} selected
                     </span>
                   )}
-                  <button 
-                    className="btn primary" 
-                    disabled={selectedContactIds.length === 0 || isSendingSms}
-                    onClick={() => handleBroadcastSms(selectedContactIds)}
-                    style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
-                  >
-                    <Send size={14} /> Broadcast Selected ({selectedContactIds.length})
-                  </button>
+                  {isAdmin && (
+                    <button 
+                      className="btn primary" 
+                      disabled={selectedContactIds.length === 0 || isSendingSms}
+                      onClick={() => handleBroadcastSms(selectedContactIds)}
+                      style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                    >
+                      <Send size={14} /> Broadcast Selected ({selectedContactIds.length})
+                    </button>
+                  )}
                   <select 
                     className="filter-select"
                     style={{ minWidth: 200 }}
@@ -4549,13 +4941,15 @@ export default function App() {
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
                 <h2 className="tab-title">Master Contacts Database</h2>
                 <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-                  <button 
-                    className="btn primary" 
-                    onClick={() => { setShowMasterImportModal(true); setMasterImportAnalysis(null); setMasterImportError(''); }}
-                    style={{ display: 'inline-flex', alignItems: 'center', gap: 8, background: '#6366f1', borderColor: '#6366f1' }}
-                  >
-                    <Upload size={16} /> Bulk Import / Update
-                  </button>
+                  {isAdmin && (
+                    <button 
+                      className="btn primary" 
+                      onClick={() => { setShowMasterImportModal(true); setMasterImportAnalysis(null); setMasterImportError(''); }}
+                      style={{ display: 'inline-flex', alignItems: 'center', gap: 8, background: '#6366f1', borderColor: '#6366f1' }}
+                    >
+                      <Upload size={16} /> Bulk Import / Update
+                    </button>
+                  )}
                   <button 
                     className="btn" 
                     onClick={() => { setShowPhotoModal(true); setSyncPhotoResult(null); }}
@@ -4563,9 +4957,11 @@ export default function App() {
                   >
                     <ImageIcon size={16} /> Member Photos
                   </button>
-                  <button className="btn warning" onClick={() => selectTab('volunteers', true)} style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-                    <Users size={16} /> Manage Volunteers
-                  </button>
+                  {isAdmin && (
+                    <button className="btn warning" onClick={() => selectTab('volunteers', true)} style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                      <Users size={16} /> Manage Volunteers
+                    </button>
+                  )}
                   <button className="btn success" onClick={() => setShowAddModal(true)}>
                     <Plus size={16} /> Add Contact
                   </button>
@@ -4593,23 +4989,25 @@ export default function App() {
                       <span style={{ fontSize: 12, color: 'var(--color-text-white)', fontWeight: 600 }}>
                         {selectedContactIds.length} Selected
                       </span>
-                      <select 
-                        className="filter-select"
-                        style={{ padding: '4px 8px', fontSize: 12, height: 'auto', border: '1px solid var(--border-color)', margin: 0 }}
-                        defaultValue=""
-                        onChange={(e) => {
-                          if (e.target.value) {
-                            handleBulkAssignVolunteers(e.target.value);
-                            e.target.value = "";
-                          }
-                        }}
-                      >
-                        <option value="" disabled>Assign to...</option>
-                        <option value="Unassigned">Unassigned</option>
-                        {volunteers.map(name => (
-                          <option key={name} value={name}>{name}</option>
-                        ))}
-                      </select>
+                      {isAdmin && (
+                        <select 
+                          className="filter-select"
+                          style={{ padding: '4px 8px', fontSize: 12, height: 'auto', border: '1px solid var(--border-color)', margin: 0 }}
+                          defaultValue=""
+                          onChange={(e) => {
+                            if (e.target.value) {
+                              handleBulkAssignVolunteers(e.target.value);
+                              e.target.value = "";
+                            }
+                          }}
+                        >
+                          <option value="" disabled>Assign to...</option>
+                          <option value="Unassigned">Unassigned</option>
+                          {volunteers.map(name => (
+                            <option key={name} value={name}>{name}</option>
+                          ))}
+                        </select>
+                      )}
                       <select 
                         className="filter-select"
                         style={{ padding: '4px 8px', fontSize: 12, height: 'auto', border: '1px solid var(--border-color)', margin: 0 }}
@@ -5540,20 +5938,22 @@ export default function App() {
                     </span>
                   </h3>
 
-                  {/* Add Helper Inline Form */}
-                  <div style={{ display: 'flex', gap: 8, marginBottom: 20 }}>
-                    <input 
-                      type="text" 
-                      className="drawer-input" 
-                      placeholder="Add external or internal volunteer..." 
-                      value={newVolunteerName}
-                      onChange={(e) => setNewVolunteerName(e.target.value)}
-                      style={{ margin: 0, height: 38, fontSize: 13 }}
-                    />
-                    <button className="btn success" onClick={handleAddVolunteer} style={{ height: 38, padding: '0 16px', fontSize: 13, whiteSpace: 'nowrap' }}>
-                      <Plus size={14} /> Add Helper
-                    </button>
-                  </div>
+                  {/* Add Helper Inline Form (Admin Only) */}
+                  {isAdmin && (
+                    <div style={{ display: 'flex', gap: 8, marginBottom: 20 }}>
+                      <input 
+                        type="text" 
+                        className="drawer-input" 
+                        placeholder="Add external or internal volunteer..." 
+                        value={newVolunteerName}
+                        onChange={(e) => setNewVolunteerName(e.target.value)}
+                        style={{ margin: 0, height: 38, fontSize: 13 }}
+                      />
+                      <button className="btn success" onClick={handleAddVolunteer} style={{ height: 38, padding: '0 16px', fontSize: 13, whiteSpace: 'nowrap' }}>
+                        <Plus size={14} /> Add Helper
+                      </button>
+                    </div>
+                  )}
 
                   {/* Directory Table */}
                   <div className="table-wrapper" style={{ overflowY: 'auto', maxHeight: 450 }}>
@@ -5597,14 +5997,16 @@ export default function App() {
                                 </td>
                                 <td style={{ textAlign: 'center', color: '#10b981', fontWeight: 600 }}>{success}%</td>
                                 <td style={{ textAlign: 'right' }} onClick={(e) => e.stopPropagation()}>
-                                  <button 
-                                    className="action-btn"
-                                    style={{ color: '#ef4444' }}
-                                    title="Delete Helper"
-                                    onClick={() => handleDeleteVolunteer(name)}
-                                  >
-                                    <X size={16} />
-                                  </button>
+                                  {isAdmin && (
+                                    <button 
+                                      className="action-btn"
+                                      style={{ color: '#ef4444' }}
+                                      title="Delete Helper"
+                                      onClick={() => handleDeleteVolunteer(name)}
+                                    >
+                                      <X size={16} />
+                                    </button>
+                                  )}
                                 </td>
                               </tr>
                             );
@@ -7861,6 +8263,254 @@ export default function App() {
                   Close
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ==================== CHANGE PASSWORD MODAL ==================== */}
+      {showChangePasswordModal && (
+        <div className="modal-backdrop" onClick={() => setShowChangePasswordModal(false)}>
+          <div className="modal" style={{ maxWidth: 460, width: '92%' }} onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <div style={{ background: 'rgba(99, 102, 241, 0.15)', padding: 8, borderRadius: 8, color: '#818cf8', display: 'flex' }}>
+                  <Key size={20} />
+                </div>
+                <div>
+                  <h3 className="drawer-title" style={{ margin: 0, fontSize: 18, color: 'var(--color-text-white)' }}>
+                    Change Account Password
+                  </h3>
+                  <p style={{ margin: 0, fontSize: 12, color: 'var(--color-text-muted)' }}>
+                    Logged in as: <strong>{currentUser?.username}</strong> ({currentUser?.role})
+                  </p>
+                </div>
+              </div>
+              <button type="button" className="close-btn" onClick={() => setShowChangePasswordModal(false)}>×</button>
+            </div>
+
+            <form onSubmit={handleChangePassword} style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: 16 }}>
+              {changePasswordMsg.text && (
+                <div className={changePasswordMsg.type === 'error' ? 'login-error-banner' : ''} style={changePasswordMsg.type === 'success' ? { background: 'rgba(16, 185, 129, 0.15)', border: '1px solid rgba(16, 185, 129, 0.3)', color: '#34d399', padding: '10px 14px', borderRadius: 8, fontSize: 13, display: 'flex', alignItems: 'center', gap: 8 } : {}}>
+                  {changePasswordMsg.type === 'error' ? <AlertCircle size={16} /> : <CheckCircle size={16} />}
+                  <span>{changePasswordMsg.text}</span>
+                </div>
+              )}
+
+              <div>
+                <label className="drawer-label">Current Password *</label>
+                <input
+                  type="password"
+                  className="drawer-input"
+                  placeholder="Enter current password"
+                  value={changePasswordForm.currentPassword}
+                  onChange={(e) => setChangePasswordForm({ ...changePasswordForm, currentPassword: e.target.value })}
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="drawer-label">New Password (min 6 characters) *</label>
+                <input
+                  type="password"
+                  className="drawer-input"
+                  placeholder="Enter new password"
+                  value={changePasswordForm.newPassword}
+                  onChange={(e) => setChangePasswordForm({ ...changePasswordForm, newPassword: e.target.value })}
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="drawer-label">Confirm New Password *</label>
+                <input
+                  type="password"
+                  className="drawer-input"
+                  placeholder="Re-enter new password"
+                  value={changePasswordForm.confirmPassword}
+                  onChange={(e) => setChangePasswordForm({ ...changePasswordForm, confirmPassword: e.target.value })}
+                  required
+                />
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, borderTop: '1px solid var(--border-color)', paddingTop: 16 }}>
+                <button type="button" className="btn" onClick={() => setShowChangePasswordModal(false)}>
+                  Cancel
+                </button>
+                <button type="submit" className="btn primary" disabled={changePasswordLoading}>
+                  {changePasswordLoading ? 'Updating...' : 'Update Password'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ==================== USER MANAGEMENT MODAL (ADMIN ONLY) ==================== */}
+      {showUserManagementModal && isAdmin && (
+        <div className="modal-backdrop" onClick={() => setShowUserManagementModal(false)}>
+          <div className="modal" style={{ maxWidth: 760, width: '92%', maxHeight: '90vh', display: 'flex', flexDirection: 'column' }} onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <div style={{ background: 'rgba(168, 85, 247, 0.15)', padding: 8, borderRadius: 8, color: '#c084fc', display: 'flex' }}>
+                  <Shield size={22} />
+                </div>
+                <div>
+                  <h3 className="drawer-title" style={{ margin: 0, fontSize: 18, color: 'var(--color-text-white)' }}>
+                    System User Accounts & Role Management
+                  </h3>
+                  <p style={{ margin: 0, fontSize: 12, color: 'var(--color-text-muted)' }}>
+                    Create login credentials for volunteers and assign role permissions
+                  </p>
+                </div>
+              </div>
+              <button type="button" className="close-btn" onClick={() => setShowUserManagementModal(false)}>×</button>
+            </div>
+
+            <div style={{ padding: '20px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 20 }}>
+              {/* Add New User Account Card */}
+              <div style={{ background: 'rgba(255, 255, 255, 0.03)', border: '1px solid var(--border-color)', borderRadius: 12, padding: 16 }}>
+                <h4 style={{ margin: '0 0 12px 0', fontSize: 14, color: 'var(--color-text-white)', fontWeight: 700, display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <Plus size={16} color="#6366f1" /> Create New User Account
+                </h4>
+
+                {userMgmtMsg.text && (
+                  <div className={userMgmtMsg.type === 'error' ? 'login-error-banner' : ''} style={userMgmtMsg.type === 'success' ? { background: 'rgba(16, 185, 129, 0.15)', border: '1px solid rgba(16, 185, 129, 0.3)', color: '#34d399', padding: '10px 14px', borderRadius: 8, fontSize: 13, marginBottom: 14, display: 'flex', alignItems: 'center', gap: 8 } : {}}>
+                    {userMgmtMsg.type === 'error' ? <AlertCircle size={16} /> : <CheckCircle size={16} />}
+                    <span>{userMgmtMsg.text}</span>
+                  </div>
+                )}
+
+                <form onSubmit={handleCreateUser} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12, alignItems: 'flex-end' }}>
+                  <div>
+                    <label className="drawer-label">Username *</label>
+                    <input
+                      type="text"
+                      className="drawer-input"
+                      placeholder="e.g. rahul_v"
+                      value={newUserForm.username}
+                      onChange={(e) => setNewUserForm({ ...newUserForm, username: e.target.value })}
+                      required
+                    />
+                  </div>
+
+                  <div>
+                    <label className="drawer-label">Password * (min 6)</label>
+                    <input
+                      type="password"
+                      className="drawer-input"
+                      placeholder="Password"
+                      value={newUserForm.password}
+                      onChange={(e) => setNewUserForm({ ...newUserForm, password: e.target.value })}
+                      required
+                    />
+                  </div>
+
+                  <div>
+                    <label className="drawer-label">System Role *</label>
+                    <select
+                      className="drawer-input"
+                      value={newUserForm.role}
+                      onChange={(e) => setNewUserForm({ ...newUserForm, role: e.target.value })}
+                    >
+                      <option value="volunteer">Volunteer (Caller)</option>
+                      <option value="admin">Administrator</option>
+                      <option value="viewer">Viewer (Read-only)</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="drawer-label">Link to Volunteer Name</label>
+                    <select
+                      className="drawer-input"
+                      value={newUserForm.volunteer_name}
+                      onChange={(e) => setNewUserForm({ ...newUserForm, volunteer_name: e.target.value })}
+                    >
+                      <option value="">-- Select Volunteer --</option>
+                      {volunteers.map(v => (
+                        <option key={v} value={v}>{v}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <button type="submit" className="btn primary" disabled={userMgmtLoading} style={{ width: '100%', height: 42 }}>
+                      {userMgmtLoading ? 'Creating...' : '+ Create Account'}
+                    </button>
+                  </div>
+                </form>
+              </div>
+
+              {/* Existing System Users Table */}
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                  <h4 style={{ margin: 0, fontSize: 14, color: 'var(--color-text-white)', fontWeight: 700 }}>
+                    Active User Accounts ({systemUsers.length})
+                  </h4>
+                  <button type="button" className="btn" style={{ fontSize: 12, padding: '4px 10px' }} onClick={fetchSystemUsers}>
+                    <RefreshCw size={12} /> Refresh
+                  </button>
+                </div>
+
+                <div className="table-responsive" style={{ maxHeight: 320, overflowY: 'auto' }}>
+                  <table className="table" style={{ width: '100%', fontSize: 13 }}>
+                    <thead>
+                      <tr>
+                        <th>Username</th>
+                        <th>Role</th>
+                        <th>Linked Volunteer</th>
+                        <th>Created Date</th>
+                        <th style={{ textAlign: 'right' }}>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {systemUsers.map(u => (
+                        <tr key={u.id}>
+                          <td>
+                            <strong style={{ color: 'var(--color-text-white)' }}>{u.username}</strong>
+                            {u.id === currentUser?.id && (
+                              <span style={{ marginLeft: 6, fontSize: 10, color: '#34d399', fontWeight: 600 }}>(Current Session)</span>
+                            )}
+                          </td>
+                          <td>
+                            <span className={`badge-role ${u.role}`}>
+                              {u.role === 'admin' ? <Shield size={10} /> : <UserCheck size={10} />}
+                              {u.role}
+                            </span>
+                          </td>
+                          <td style={{ color: u.volunteer_name ? 'var(--color-text-primary)' : 'var(--color-text-muted)' }}>
+                            {u.volunteer_name || '—'}
+                          </td>
+                          <td style={{ color: 'var(--color-text-muted)', fontSize: 12 }}>
+                            {u.created_at ? new Date(u.created_at).toLocaleDateString() : '—'}
+                          </td>
+                          <td style={{ textAlign: 'right' }}>
+                            {u.id !== currentUser?.id ? (
+                              <button
+                                type="button"
+                                className="action-btn"
+                                onClick={() => handleDeleteUser(u.id, u.username)}
+                                style={{ background: 'rgba(239, 68, 68, 0.12)', color: '#f87171', border: '1px solid rgba(239, 68, 68, 0.25)', padding: '4px 8px', borderRadius: 6, fontSize: 11 }}
+                                title="Delete account"
+                              >
+                                Delete
+                              </button>
+                            ) : (
+                              <span style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>Protected</span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', borderTop: '1px solid var(--border-color)', padding: '12px 20px' }}>
+              <button className="btn" onClick={() => setShowUserManagementModal(false)}>
+                Close
+              </button>
             </div>
           </div>
         </div>

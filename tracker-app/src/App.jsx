@@ -158,6 +158,14 @@ export default function App() {
   const [isAnalyzingMaster, setIsAnalyzingMaster] = useState(false);
   const [isExecutingMaster, setIsExecutingMaster] = useState(false);
 
+  // Photo management modal states
+  const [showPhotoModal, setShowPhotoModal] = useState(false);
+  const [isSyncingPhotos, setIsSyncingPhotos] = useState(false);
+  const [syncPhotoResult, setSyncPhotoResult] = useState(null);
+  const [bulkPhotoFiles, setBulkPhotoFiles] = useState([]);
+  const [isBulkUploadingPhotos, setIsBulkUploadingPhotos] = useState(false);
+  const [bulkPhotoProgress, setBulkPhotoProgress] = useState('');
+
   // Exit poll win threshold
   const [exitPollTarget, setExitPollTarget] = useState(
     Number(localStorage.getItem('exit_poll_target')) || 1000
@@ -1553,6 +1561,144 @@ export default function App() {
     } finally {
       setIsExecutingMaster(false);
       setMasterImportProgress('');
+    }
+  };
+
+  // Handle individual contact photo upload
+  const handleUploadContactPhoto = async (contactId, e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+
+    if (file.size > 10 * 1024 * 1024) {
+      alert('Photo file is too large. Please select an image under 10MB.');
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      const base64Data = event.target.result;
+      try {
+        const res = await fetch(`${API_BASE}/contacts/${contactId}/photo`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            photoBase64: base64Data,
+            filename: file.name
+          })
+        });
+
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          throw new Error(errData.error || `Upload failed (status ${res.status})`);
+        }
+
+        const data = await res.json();
+        const updatedFilename = data.photo_filename;
+
+        // Update selected contact
+        setSelectedContact(prev => prev ? { ...prev, photo_filename: updatedFilename } : prev);
+
+        // Update contacts state
+        setContacts(prev => prev.map(c => c.id === contactId ? { ...c, photo_filename: updatedFilename } : c));
+
+        alert(`Photo uploaded and saved as "${updatedFilename}"!`);
+      } catch (err) {
+        console.error('Photo upload error:', err);
+        alert('Failed to upload photo: ' + err.message);
+      }
+    };
+    reader.readAsDataURL(file);
+    e.target.value = '';
+  };
+
+  // Handle One-Click Auto-Link of existing photos on server
+  const handleSyncServerPhotos = async () => {
+    setIsSyncingPhotos(true);
+    setSyncPhotoResult(null);
+    try {
+      const res = await fetch(`${API_BASE}/contacts/sync-photos`, { method: 'POST' });
+      if (!res.ok) {
+        throw new Error(`Server returned HTTP ${res.status}`);
+      }
+      const data = await res.json();
+      setSyncPhotoResult(data);
+
+      // Refresh contacts to display updated photos
+      const refreshed = await fetch(`${API_BASE}/contacts`);
+      if (refreshed.ok) {
+        const contactsList = await refreshed.json();
+        setContacts(contactsList);
+      }
+    } catch (err) {
+      alert('Error syncing photos: ' + err.message);
+    } finally {
+      setIsSyncingPhotos(false);
+    }
+  };
+
+  // Handle Bulk Uploading Photos from computer
+  const handleExecuteBulkPhotoUpload = async () => {
+    if (bulkPhotoFiles.length === 0) {
+      alert('Please select photo files to upload first.');
+      return;
+    }
+
+    setIsBulkUploadingPhotos(true);
+    setBulkPhotoProgress(`Preparing 0 / ${bulkPhotoFiles.length} photos...`);
+
+    try {
+      const fileDataPromises = bulkPhotoFiles.map(file => {
+        return new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve({ filename: file.name, base64: reader.result });
+          reader.onerror = reject;
+          reader.readAsDataURL(file);
+        });
+      });
+
+      const loadedFiles = await Promise.all(fileDataPromises);
+
+      const CHUNK_SIZE = 15;
+      let totalSaved = 0;
+      let totalLinked = 0;
+
+      for (let i = 0; i < loadedFiles.length; i += CHUNK_SIZE) {
+        const chunk = loadedFiles.slice(i, i + CHUNK_SIZE);
+        const currentCount = Math.min(i + chunk.length, loadedFiles.length);
+        setBulkPhotoProgress(`Uploading ${currentCount} / ${loadedFiles.length} photos...`);
+
+        const res = await fetch(`${API_BASE}/photos/bulk-upload`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ photos: chunk })
+        });
+
+        if (!res.ok) {
+          throw new Error(`Batch upload failed with HTTP ${res.status}`);
+        }
+
+        const data = await res.json();
+        totalSaved += (data.savedCount || 0);
+        totalLinked += (data.linkedCount || 0);
+      }
+
+      alert(`Photo Upload Complete!\n\n• Photos Uploaded: ${totalSaved}\n• Linked to Member Profiles: ${totalLinked}`);
+
+      const refreshed = await fetch(`${API_BASE}/contacts`);
+      if (refreshed.ok) {
+        const contactsList = await refreshed.json();
+        setContacts(contactsList);
+      }
+
+      setBulkPhotoFiles([]);
+      setBulkPhotoProgress('');
+      setShowPhotoModal(false);
+    } catch (err) {
+      console.error('Bulk photo upload error:', err);
+      alert('Error during photo upload: ' + err.message);
+    } finally {
+      setIsBulkUploadingPhotos(false);
+      setBulkPhotoProgress('');
     }
   };
 
@@ -4410,6 +4556,13 @@ export default function App() {
                   >
                     <Upload size={16} /> Bulk Import / Update
                   </button>
+                  <button 
+                    className="btn" 
+                    onClick={() => { setShowPhotoModal(true); setSyncPhotoResult(null); }}
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: 8, background: 'rgba(99, 102, 241, 0.15)', borderColor: '#6366f1', color: '#a5b4fc' }}
+                  >
+                    <ImageIcon size={16} /> Member Photos
+                  </button>
                   <button className="btn warning" onClick={() => selectTab('volunteers', true)} style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
                     <Users size={16} /> Manage Volunteers
                   </button>
@@ -5670,19 +5823,39 @@ export default function App() {
 
             {/* Member Photo & Identity Header */}
             <div className="drawer-photo-header">
-              {selectedContact.photo_filename ? (
-                <img 
-                  src={`${PHOTO_BASE}/${encodeURIComponent(selectedContact.photo_filename)}`}
-                  alt={selectedContact.account_name}
-                  className="drawer-avatar-large"
-                  onError={(e) => { e.target.style.display = 'none'; if (e.target.nextSibling) e.target.nextSibling.style.display = 'flex'; }}
-                />
-              ) : null}
-              <div 
-                className="drawer-avatar-fallback-large"
-                style={{ display: selectedContact.photo_filename ? 'none' : 'flex' }}
-              >
-                {selectedContact.account_name.substring(0, 2)}
+              <div style={{ position: 'relative', display: 'inline-block', flexShrink: 0 }}>
+                {selectedContact.photo_filename ? (
+                  <img 
+                    src={`${PHOTO_BASE}/${encodeURIComponent(selectedContact.photo_filename)}`}
+                    alt={selectedContact.account_name}
+                    className="drawer-avatar-large"
+                    onError={(e) => { e.target.style.display = 'none'; if (e.target.nextSibling) e.target.nextSibling.style.display = 'flex'; }}
+                  />
+                ) : null}
+                <div 
+                  className="drawer-avatar-fallback-large"
+                  style={{ display: selectedContact.photo_filename ? 'none' : 'flex' }}
+                >
+                  {selectedContact.account_name.substring(0, 2)}
+                </div>
+                <label 
+                  title="Upload / change photo for this member"
+                  style={{ 
+                    position: 'absolute', bottom: -2, right: -2, 
+                    background: '#4f46e5', color: '#ffffff', 
+                    width: 26, height: 26, borderRadius: '50%', 
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', 
+                    cursor: 'pointer', border: '2px solid #1e293b', boxShadow: '0 2px 6px rgba(0,0,0,0.5)' 
+                  }}
+                >
+                  <ImageIcon size={13} />
+                  <input 
+                    type="file" 
+                    accept="image/png,image/jpeg,image/jpg,image/webp" 
+                    style={{ display: 'none' }} 
+                    onChange={(e) => handleUploadContactPhoto(selectedContact.id, e)} 
+                  />
+                </label>
               </div>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: 17, fontWeight: 700, color: 'var(--color-text-white)' }}>
@@ -5785,7 +5958,18 @@ export default function App() {
                   />
                 </div>
                 <div className="drawer-field">
-                  <span className="drawer-label">Photo Filename</span>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                    <span className="drawer-label" style={{ marginBottom: 0 }}>Photo Filename</span>
+                    <label style={{ fontSize: 11, color: '#818cf8', cursor: 'pointer', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                      <ImageIcon size={12} /> Choose Image
+                      <input 
+                        type="file" 
+                        accept="image/png,image/jpeg,image/jpg,image/webp" 
+                        style={{ display: 'none' }} 
+                        onChange={(e) => handleUploadContactPhoto(selectedContact.id, e)} 
+                      />
+                    </label>
+                  </div>
                   <input 
                     type="text" 
                     className="drawer-input" 
@@ -6355,6 +6539,144 @@ export default function App() {
               </div>
             )}
 
+          </div>
+        </div>
+      )}
+
+      {/* ==================== PHOTO MANAGEMENT MODAL ==================== */}
+      {showPhotoModal && (
+        <div className="modal-backdrop" onClick={() => setShowPhotoModal(false)}>
+          <div className="modal" style={{ maxWidth: 680, width: '92%' }} onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3 className="drawer-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <ImageIcon size={20} color="#818cf8" /> Member Photos Manager
+              </h3>
+              <button type="button" className="close-btn" onClick={() => setShowPhotoModal(false)}>×</button>
+            </div>
+
+            <div style={{ padding: '16px 0' }}>
+              {/* Option 1: Auto-Link Server Photos */}
+              <div style={{ background: 'rgba(99, 102, 241, 0.08)', border: '1px solid rgba(99, 102, 241, 0.3)', borderRadius: 10, padding: 16, marginBottom: 20 }}>
+                <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
+                  <div style={{ flex: 1, minWidth: 260 }}>
+                    <h4 style={{ margin: '0 0 6px 0', fontSize: 15, color: '#e2e8f0', display: 'flex', alignItems: 'center', gap: 8 }}>
+                      ⚡ Auto-Link Server Photos (1,879 Photos)
+                    </h4>
+                    <p style={{ margin: 0, fontSize: 13, color: 'var(--color-text-secondary)', lineHeight: 1.5 }}>
+                      Connects photos already hosted on your server with your database members by matching their Account Code (e.g. <code>_L3181.png</code>).
+                    </p>
+                    {syncPhotoResult && (
+                      <div style={{ marginTop: 10, fontSize: 12, padding: '6px 10px', borderRadius: 6, background: syncPhotoResult.success ? 'rgba(16, 185, 129, 0.15)' : 'rgba(239, 68, 68, 0.15)', color: syncPhotoResult.success ? '#34d399' : '#f87171' }}>
+                        {syncPhotoResult.success 
+                          ? `✓ Successfully linked ${syncPhotoResult.linkedCount} photos! (Total on server: ${syncPhotoResult.totalPhotosOnDisk || 1879})`
+                          : `✗ Error: ${syncPhotoResult.error}`}
+                      </div>
+                    )}
+                  </div>
+                  <button 
+                    type="button" 
+                    className="btn primary" 
+                    onClick={handleSyncServerPhotos} 
+                    disabled={isSyncingPhotos}
+                    style={{ whiteSpace: 'nowrap', display: 'inline-flex', alignItems: 'center', gap: 6, background: '#4f46e5', borderColor: '#4f46e5' }}
+                  >
+                    {isSyncingPhotos ? <RefreshCw size={14} className="spin" /> : <CheckCircle size={14} />}
+                    {isSyncingPhotos ? 'Linking...' : 'Auto-Link Photos'}
+                  </button>
+                </div>
+              </div>
+
+              {/* Option 2: Upload New Photo Files from Computer */}
+              <div style={{ background: 'rgba(30, 41, 59, 0.6)', border: '1px solid #334155', borderRadius: 10, padding: 16 }}>
+                <h4 style={{ margin: '0 0 6px 0', fontSize: 15, color: '#e2e8f0', display: 'flex', alignItems: 'center', gap: 8 }}>
+                  📁 Upload New Photo Files from Computer
+                </h4>
+                <p style={{ margin: '0 0 14px 0', fontSize: 13, color: 'var(--color-text-secondary)', lineHeight: 1.5 }}>
+                  Select one or more member photo files (<code>.png</code>, <code>.jpg</code>, <code>.webp</code>). Photos formatted as <code>NAME_ACCCODE.png</code> (e.g. <code>A. KABIR CHANNANKARA_L3181.png</code>) will automatically link to the corresponding member.
+                </p>
+
+                <div 
+                  style={{ 
+                    border: '2px dashed #475569', 
+                    borderRadius: 8, 
+                    padding: '24px 16px', 
+                    textAlign: 'center',
+                    background: 'rgba(15, 23, 42, 0.5)',
+                    cursor: 'pointer'
+                  }}
+                  onClick={() => document.getElementById('bulkPhotoFileInput').click()}
+                >
+                  <input 
+                    id="bulkPhotoFileInput" 
+                    type="file" 
+                    multiple 
+                    accept="image/png,image/jpeg,image/jpg,image/webp" 
+                    style={{ display: 'none' }} 
+                    onChange={(e) => {
+                      if (e.target.files) {
+                        setBulkPhotoFiles(Array.from(e.target.files));
+                      }
+                    }} 
+                  />
+                  <ImageIcon size={32} color="#818cf8" style={{ margin: '0 auto 8px auto', display: 'block' }} />
+                  <div style={{ fontSize: 14, fontWeight: 600, color: '#e2e8f0' }}>
+                    {bulkPhotoFiles.length > 0 
+                      ? `${bulkPhotoFiles.length} photo(s) selected` 
+                      : 'Click to select photo files from your computer'}
+                  </div>
+                  <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginTop: 4 }}>
+                    Supports PNG, JPG, JPEG, WEBP
+                  </div>
+                </div>
+
+                {bulkPhotoFiles.length > 0 && (
+                  <div style={{ marginTop: 14 }}>
+                    <div style={{ maxHeight: 140, overflowY: 'auto', background: '#0f172a', borderRadius: 6, padding: 8, border: '1px solid #334155' }}>
+                      {bulkPhotoFiles.slice(0, 50).map((f, i) => (
+                        <div key={i} style={{ fontSize: 12, color: '#94a3b8', padding: '3px 6px', display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #1e293b' }}>
+                          <span style={{ textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap', maxWidth: '80%' }}>
+                            📷 {f.name}
+                          </span>
+                          <span style={{ color: '#64748b' }}>{(f.size / 1024).toFixed(1)} KB</span>
+                        </div>
+                      ))}
+                      {bulkPhotoFiles.length > 50 && (
+                        <div style={{ fontSize: 11, color: '#64748b', textAlign: 'center', padding: 4 }}>
+                          ...and {bulkPhotoFiles.length - 50} more files
+                        </div>
+                      )}
+                    </div>
+
+                    <div style={{ marginTop: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <button 
+                        type="button" 
+                        className="btn" 
+                        onClick={() => setBulkPhotoFiles([])}
+                        style={{ fontSize: 12 }}
+                      >
+                        Clear Selection
+                      </button>
+                      <button 
+                        type="button" 
+                        className="btn success" 
+                        disabled={isBulkUploadingPhotos}
+                        onClick={handleExecuteBulkPhotoUpload}
+                        style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                      >
+                        {isBulkUploadingPhotos ? <RefreshCw size={14} className="spin" /> : <Upload size={14} />}
+                        {isBulkUploadingPhotos ? (bulkPhotoProgress || 'Uploading...') : `Upload & Link ${bulkPhotoFiles.length} Photos`}
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="modal-actions" style={{ marginTop: 10, display: 'flex', justifyContent: 'flex-end' }}>
+              <button type="button" className="btn" onClick={() => setShowPhotoModal(false)}>
+                Close
+              </button>
+            </div>
           </div>
         </div>
       )}

@@ -1864,6 +1864,187 @@ app.post('/api/blood-bank/repair-ab', async (req, res) => {
 });
 
 // ==========================================
+// MEMBER PHOTO MANAGEMENT & SYNC APIS
+// ==========================================
+
+const photosDir = path.join(__dirname, 'extracted_photos');
+if (!fs.existsSync(photosDir)) {
+  try {
+    fs.mkdirSync(photosDir, { recursive: true });
+  } catch (e) {}
+}
+
+// Auto-sync existing photos from disk / contacts_data.json to contacts in DB
+const syncPhotosWithDatabase = async () => {
+  try {
+    if (!fs.existsSync(photosDir)) return { success: false, reason: 'Photos directory does not exist' };
+
+    const files = fs.readdirSync(photosDir);
+    const photoMap = new Map(); // accCode (uppercase without spaces) -> filename
+
+    // 1. Map from extracted_photos directory on disk
+    for (const f of files) {
+      if (!/\.(png|jpg|jpeg|webp)$/i.test(f)) continue;
+      const match = f.match(/_([A-Za-z0-9]+)\.(png|jpg|jpeg|webp)$/i);
+      if (match) {
+        const code = match[1].toUpperCase().replace(/\s+/g, '');
+        photoMap.set(code, f);
+      }
+    }
+
+    // 2. Map from contacts_data.json
+    let jsonPath = path.join(__dirname, 'contacts_data.json');
+    if (!fs.existsSync(jsonPath)) jsonPath = path.join(__dirname, '../contacts_data.json');
+    if (fs.existsSync(jsonPath)) {
+      try {
+        const contactsData = JSON.parse(fs.readFileSync(jsonPath, 'utf8'));
+        for (const c of contactsData) {
+          if (c.accCode && c.photo_filename) {
+            const code = String(c.accCode).toUpperCase().replace(/\s+/g, '');
+            if (!photoMap.has(code)) {
+              photoMap.set(code, c.photo_filename);
+            }
+          }
+        }
+      } catch (e) {}
+    }
+
+    // 3. Find contacts where photo_filename is missing or empty
+    const contacts = await query(`
+      SELECT id, acc_code, account_name, photo_filename 
+      FROM contacts 
+      WHERE photo_filename IS NULL OR photo_filename = ''
+    `);
+
+    let linkedCount = 0;
+    for (const c of contacts) {
+      if (!c.acc_code) continue;
+      const codeKey = String(c.acc_code).toUpperCase().replace(/\s+/g, '');
+      const matchedFilename = photoMap.get(codeKey);
+      if (matchedFilename) {
+        await run('UPDATE contacts SET photo_filename = ? WHERE id = ?', [matchedFilename, c.id]);
+        linkedCount++;
+      }
+    }
+
+    if (linkedCount > 0) {
+      console.log(`[Photo Sync] Successfully linked ${linkedCount} photos to database contacts.`);
+    } else {
+      console.log(`[Photo Sync] Checked ${contacts.length} contacts without photos. No new links needed.`);
+    }
+
+    return { success: true, linkedCount, checkedCount: contacts.length, totalPhotosOnDisk: files.length };
+  } catch (err) {
+    console.error('Error during photo synchronization:', err.message);
+    return { success: false, error: err.message };
+  }
+};
+
+// Endpoint to trigger photo synchronization
+app.post('/api/contacts/sync-photos', async (req, res) => {
+  try {
+    const result = await syncPhotosWithDatabase();
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Endpoint to upload / set an individual contact photo
+app.post('/api/contacts/:id/photo', async (req, res) => {
+  const { id } = req.params;
+  const { photoBase64, filename } = req.body;
+
+  if (!photoBase64) {
+    return res.status(400).json({ error: 'photoBase64 is required' });
+  }
+
+  try {
+    const rows = await query('SELECT id, acc_code, account_name, photo_filename FROM contacts WHERE id = ?', [id]);
+    if (!rows || rows.length === 0) {
+      return res.status(404).json({ error: 'Contact not found' });
+    }
+    const contact = rows[0];
+
+    // Extract base64 payload
+    const matches = photoBase64.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
+    const base64Data = matches ? matches[2] : photoBase64;
+    const buffer = Buffer.from(base64Data, 'base64');
+
+    // Generate clean filename: NAME_ACCCODE.png
+    let ext = 'png';
+    if (matches && matches[1]) {
+      if (matches[1].includes('jpeg') || matches[1].includes('jpg')) ext = 'jpg';
+      else if (matches[1].includes('webp')) ext = 'webp';
+    }
+
+    const cleanName = (contact.account_name || 'Member').replace(/[^a-zA-Z0-9.\-_ ]/g, '').trim();
+    const cleanCode = (contact.acc_code || `ID${contact.id}`).replace(/[^a-zA-Z0-9]/g, '').trim();
+    const targetFilename = filename && /\.(png|jpg|jpeg|webp)$/i.test(filename) 
+      ? filename 
+      : `${cleanName}_${cleanCode}.${ext}`;
+
+    if (!fs.existsSync(photosDir)) fs.mkdirSync(photosDir, { recursive: true });
+    const filePath = path.join(photosDir, targetFilename);
+    fs.writeFileSync(filePath, buffer);
+
+    await run('UPDATE contacts SET photo_filename = ? WHERE id = ?', [targetFilename, id]);
+
+    res.json({
+      success: true,
+      photo_filename: targetFilename,
+      url: `/photos/${encodeURIComponent(targetFilename)}`
+    });
+  } catch (err) {
+    console.error('Error uploading contact photo:', err);
+    res.status(500).json({ error: err.message || 'Failed to save photo' });
+  }
+});
+
+// Endpoint to bulk upload photos
+app.post('/api/photos/bulk-upload', async (req, res) => {
+  const { photos } = req.body;
+  if (!Array.isArray(photos) || photos.length === 0) {
+    return res.status(400).json({ error: 'photos array is required' });
+  }
+
+  try {
+    if (!fs.existsSync(photosDir)) fs.mkdirSync(photosDir, { recursive: true });
+
+    let savedCount = 0;
+    let linkedCount = 0;
+
+    for (const item of photos) {
+      if (!item.filename || !item.base64) continue;
+
+      const rawBase64 = item.base64.replace(/^data:([A-Za-z-+\/]+);base64,/, '');
+      const buffer = Buffer.from(rawBase64, 'base64');
+      const safeFilename = path.basename(item.filename);
+      const targetPath = path.join(photosDir, safeFilename);
+
+      fs.writeFileSync(targetPath, buffer);
+      savedCount++;
+
+      // Attempt to link to contact by matching acc_code in filename
+      const match = safeFilename.match(/_([A-Za-z0-9]+)\.(png|jpg|jpeg|webp)$/i);
+      if (match) {
+        const code = match[1].toUpperCase().replace(/\s+/g, '');
+        const updatedRes = await run(
+          'UPDATE contacts SET photo_filename = ? WHERE UPPER(REPLACE(acc_code, \' \', \'\')) = ?',
+          [safeFilename, code]
+        );
+        if (updatedRes) linkedCount++;
+      }
+    }
+
+    res.json({ success: true, savedCount, linkedCount });
+  } catch (err) {
+    console.error('Error in bulk photo upload:', err);
+    res.status(500).json({ error: err.message || 'Failed to bulk upload photos' });
+  }
+});
+
+// ==========================================
 // AUTOMATED BIRTHDAY EMAIL SERVICE & APIS
 // ==========================================
 
@@ -2245,6 +2426,9 @@ setTimeout(() => {
 
   console.log('[Startup Check] Verifying and reconciling AB+/AB- blood groups...');
   repairBloodGroupsFromContactsData().catch(err => console.log('[Startup Blood Group Reconcile Note]:', err.message));
+
+  console.log('[Startup Check] Synchronizing and linking member photos...');
+  syncPhotosWithDatabase().catch(err => console.log('[Startup Photo Sync Note]:', err.message));
 }, 10000);
 
 // Centralized Express error handler to guarantee JSON responses (e.g. payload too large, malformed JSON)

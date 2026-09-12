@@ -18,6 +18,9 @@ const getXLSX = () => {
   return _xlsxPromise;
 };
 
+import BackupManagementModal from './components/BackupManagementModal';
+import BirthdayCelebrantsHub from './components/BirthdayCelebrantsHub';
+
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001/api';
 const PHOTO_BASE = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001/api').replace(/\/api\/?$/, '') + '/photos';
 
@@ -133,6 +136,9 @@ export default function App() {
   const [newUserForm, setNewUserForm] = useState({ username: '', password: '', role: 'volunteer', volunteer_name: '' });
   const [userMgmtLoading, setUserMgmtLoading] = useState(false);
   const [userMgmtMsg, setUserMgmtMsg] = useState({ type: '', text: '' });
+
+  // Backup Management Modal State (Admin Only)
+  const [showBackupModal, setShowBackupModal] = useState(false);
 
   // Role helper constants
   const isAdmin = currentUser?.role === 'admin';
@@ -2525,6 +2531,30 @@ export default function App() {
     ).slice(0, 10); // Limit to top 10 for rapid visibility and performance
   }, [contacts, exitPollSearch]);
 
+  // Performance: Memoize SVG Donut Chart calculation values (must be at top level before early returns)
+  const donutSlices = useMemo(() => {
+    if (!stats || !stats.reactions) return [];
+    const rReaction = stats.reactions;
+    const reactionValues = [
+      { key: 'strong', value: Number(rReaction.strong) || 0, ...SENTIMENT_META.strong },
+      { key: 'leaning', value: Number(rReaction.leaning) || 0, ...SENTIMENT_META.leaning },
+      { key: 'undecided', value: Number(rReaction.undecided) || 0, ...SENTIMENT_META.undecided },
+      { key: 'opposed', value: Number(rReaction.opposed) || 0, ...SENTIMENT_META.opposed },
+      { key: 'unknown', value: Number(rReaction.unknown) || 0, ...SENTIMENT_META.unknown }
+    ];
+    
+    const totalSentimentResponses = reactionValues.reduce((sum, item) => sum + item.value, 0) || 1;
+
+    let accumulatedPct = 0;
+    return reactionValues.map(item => {
+      const percentage = (item.value / totalSentimentResponses) * 100;
+      const strokeDasharray = `${percentage} ${100 - percentage}`;
+      const strokeDashoffset = 100 - accumulatedPct + 25; // Rotated offset (start at 12 o'clock)
+      accumulatedPct += percentage;
+      return { ...item, strokeDasharray, strokeDashoffset, percentage };
+    });
+  }, [stats]);
+
   // Toggle selection for bulk actions
   const toggleContactSelect = (id) => {
     setSelectedContactIds(prev => 
@@ -2669,29 +2699,15 @@ export default function App() {
   const securedVotes = Number(stats.exitPoll?.secured) || 0;
   const exitPollProgressPct = Math.min((securedVotes / exitPollTarget) * 100, 100);
 
-  // Performance: Memoize SVG Donut Chart calculation values
-  const donutSlices = useMemo(() => {
-    if (!stats || !stats.reactions) return [];
-    const rReaction = stats.reactions;
-    const reactionValues = [
-      { key: 'strong', value: Number(rReaction.strong) || 0, ...SENTIMENT_META.strong },
-      { key: 'leaning', value: Number(rReaction.leaning) || 0, ...SENTIMENT_META.leaning },
-      { key: 'undecided', value: Number(rReaction.undecided) || 0, ...SENTIMENT_META.undecided },
-      { key: 'opposed', value: Number(rReaction.opposed) || 0, ...SENTIMENT_META.opposed },
-      { key: 'unknown', value: Number(rReaction.unknown) || 0, ...SENTIMENT_META.unknown }
-    ];
-    
-    const totalSentimentResponses = reactionValues.reduce((sum, item) => sum + item.value, 0) || 1;
-
-    let accumulatedPct = 0;
-    return reactionValues.map(item => {
-      const percentage = (item.value / totalSentimentResponses) * 100;
-      const strokeDasharray = `${percentage} ${100 - percentage}`;
-      const strokeDashoffset = 100 - accumulatedPct + 25; // Rotated offset (start at 12 o'clock)
-      accumulatedPct += percentage;
-      return { ...item, strokeDasharray, strokeDashoffset, percentage };
-    });
-  }, [stats]);
+  // Reaction values for Sentiment badge center calculation
+  const rReaction = stats.reactions || {};
+  const totalSentimentResponses = (
+    (Number(rReaction.strong) || 0) +
+    (Number(rReaction.leaning) || 0) +
+    (Number(rReaction.undecided) || 0) +
+    (Number(rReaction.opposed) || 0) +
+    (Number(rReaction.unknown) || 0)
+  ) || 1;
 
   return (
     <div className="app-container">
@@ -2791,6 +2807,17 @@ export default function App() {
               </button>
             </li>
             <li className="nav-item">
+              <button className={`nav-link ${activeTab === 'birthdays' ? 'active' : ''}`} onClick={() => selectTab('birthdays', true)}>
+                <Cake size={18} color="#ec4899" />
+                Birthday Celebrants
+                {todayBirthdays?.totalToday > 0 && (
+                  <span className="badge-count" style={{ background: '#ec4899', color: '#fff', marginLeft: 'auto' }}>
+                    {todayBirthdays.totalToday}
+                  </span>
+                )}
+              </button>
+            </li>
+            <li className="nav-item">
               <button className={`nav-link ${activeTab === 'volunteers' ? 'active' : ''}`} onClick={() => selectTab('volunteers', true)}>
                 <Users size={18} />
                 Campaign Volunteers
@@ -2866,6 +2893,17 @@ export default function App() {
                     style={{ padding: '4px 8px', fontSize: 11, display: 'inline-flex', alignItems: 'center', gap: 4, background: 'rgba(168, 85, 247, 0.15)', color: '#c084fc', border: '1px solid rgba(168, 85, 247, 0.3)' }}
                   >
                     <Users size={12} /> Users
+                  </button>
+                )}
+
+                {isAdmin && (
+                  <button
+                    className="btn"
+                    onClick={() => setShowBackupModal(true)}
+                    title="Database & Cloud Backups Management"
+                    style={{ padding: '4px 8px', fontSize: 11, display: 'inline-flex', alignItems: 'center', gap: 4, background: 'rgba(59, 130, 246, 0.15)', color: '#60a5fa', border: '1px solid rgba(59, 130, 246, 0.3)' }}
+                  >
+                    <Database size={12} /> Backups
                   </button>
                 )}
 
@@ -5485,6 +5523,18 @@ export default function App() {
                 );
               })()}
             </div>
+          )}
+
+          {/* ==================== BIRTHDAY CELEBRANTS TAB ==================== */}
+          {activeTab === 'birthdays' && (
+            <BirthdayCelebrantsHub
+              API_BASE={API_BASE}
+              PHOTO_BASE={PHOTO_BASE}
+              authToken={authToken}
+              currentUser={currentUser}
+              onSelectContact={(c) => { setSelectedContact(c); setIsDrawerOpen(true); }}
+              onRefreshBadge={(count) => setTodayBirthdays(prev => ({ ...prev, totalToday: count }))}
+            />
           )}
 
           {/* ==================== TEMPLATES TAB ==================== */}
@@ -8556,6 +8606,16 @@ export default function App() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* ==================== BACKUP MANAGEMENT MODAL (ADMIN ONLY) ==================== */}
+      {isAdmin && (
+        <BackupManagementModal
+          isOpen={showBackupModal}
+          onClose={() => setShowBackupModal(false)}
+          authToken={authToken}
+          API_BASE={API_BASE}
+        />
       )}
 
       {/* Floating SMS Broadcast Progress Toast */}

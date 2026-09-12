@@ -10,9 +10,12 @@ coverage/
 dist/
 build/
 
-# Local databases
+# Local databases and backups
 *.sqlite
 *.sqlite-journal
+*.sqlite.gz
+backups/
+tracker-backend/backups/
 
 # Environment files
 .env

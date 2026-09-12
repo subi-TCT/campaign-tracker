@@ -11,6 +11,7 @@ const cron = require('node-cron');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const compression = require('compression');
+const BackupService = require('./backupService');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'ias-election-campaign-tracker-secure-token-secret-key-2026';
 
@@ -2516,6 +2517,220 @@ app.get('/api/birthdays/upcoming', authenticateToken, async (req, res) => {
   }
 });
 
+// Helper constants for Birthday calculations
+const BIRTHDAY_MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+const BIRTHDAY_MONTH_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const BIRTHDAY_DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+// Helper: Parse and extract birthday metrics for any contact
+const parseContactBirthday = (c, now = new Date()) => {
+  const dob = (c.date_of_birth || '').trim();
+  const parts = dob.split('/');
+  if (parts.length < 2) return null;
+
+  const d = parseInt(parts[0], 10);
+  const m = parseInt(parts[1], 10) - 1; // 0-indexed month
+  if (isNaN(d) || isNaN(m) || d < 1 || d > 31 || m < 0 || m > 11) return null;
+
+  const currentYear = now.getFullYear();
+  const todayMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  let nextBday = new Date(currentYear, m, d);
+
+  if (nextBday < todayMidnight) {
+    nextBday = new Date(currentYear + 1, m, d);
+  }
+
+  const diffMs = nextBday.getTime() - todayMidnight.getTime();
+  const diffDays = Math.round(diffMs / (1000 * 60 * 60 * 24));
+
+  const birthYear = parts.length >= 3 ? parseInt(parts[2], 10) : null;
+  const turningAge = (birthYear && birthYear > 1900 && birthYear <= currentYear)
+    ? (nextBday.getFullYear() - birthYear)
+    : null;
+
+  let relativeLabel = `In ${diffDays} days`;
+  if (diffDays === 0) relativeLabel = 'Today';
+  else if (diffDays === 1) relativeLabel = 'Tomorrow';
+
+  return {
+    ...c,
+    day: d,
+    month: m + 1,
+    monthName: BIRTHDAY_MONTH_NAMES[m],
+    monthShort: BIRTHDAY_MONTH_SHORT[m],
+    diffDays,
+    relativeLabel,
+    dayOfWeek: BIRTHDAY_DAY_NAMES[nextBday.getDay()],
+    formattedDate: `${d} ${BIRTHDAY_MONTH_NAMES[m]}`,
+    formattedShort: `${String(d).padStart(2, '0')}/${String(m + 1).padStart(2, '0')}`,
+    turningAge,
+    birthdaySentThisYear: Number(c.birthday_sent_year || 0) === currentYear,
+    hasEmail: !!(c.email_id && c.email_id.includes('@')),
+    hasMobile: !!(c.mobile_number && String(c.mobile_number).trim().length >= 7)
+  };
+};
+
+// GET /api/birthdays/overview (Authenticated - Top 3 Cards and Overview)
+app.get('/api/birthdays/overview', authenticateToken, async (req, res) => {
+  try {
+    const allContacts = await query(`
+      SELECT id, s_no, acc_code, account_name, mobile_number, email_id, 
+             date_of_birth, date_of_join, blood_group, photo_filename, birthday_sent_year,
+             district, emirate, area
+      FROM contacts
+      WHERE account_status != 'Inactive'
+        AND date_of_birth IS NOT NULL
+        AND date_of_birth != ''
+        AND date_of_birth != 'N/A'
+      ORDER BY account_name ASC
+    `);
+
+    const now = new Date();
+    const currentMonthNum = now.getMonth() + 1; // 1-12
+    const currentMonthName = BIRTHDAY_MONTH_NAMES[now.getMonth()];
+
+    // Initialize 12 months array
+    const monthlyCounts = BIRTHDAY_MONTH_NAMES.map((name, idx) => ({
+      month: idx + 1,
+      name,
+      shortName: BIRTHDAY_MONTH_SHORT[idx],
+      count: 0
+    }));
+
+    const parsedContacts = [];
+    const todayMembers = [];
+    const next7DaysMembers = [];
+
+    for (const c of allContacts) {
+      const parsed = parseContactBirthday(c, now);
+      if (parsed) {
+        parsedContacts.push(parsed);
+
+        // Track month counts
+        if (parsed.month >= 1 && parsed.month <= 12) {
+          monthlyCounts[parsed.month - 1].count++;
+        }
+
+        // Today
+        if (parsed.diffDays === 0) {
+          todayMembers.push(parsed);
+        }
+
+        // Next 7 Days (including today)
+        if (parsed.diffDays >= 0 && parsed.diffDays <= 7) {
+          next7DaysMembers.push(parsed);
+        }
+      }
+    }
+
+    next7DaysMembers.sort((a, b) => a.diffDays - b.diffDays);
+
+    res.json({
+      today: {
+        date: `${String(now.getDate()).padStart(2, '0')}/${String(now.getMonth() + 1).padStart(2, '0')}`,
+        formattedDate: `${now.getDate()} ${currentMonthName} ${now.getFullYear()}`,
+        totalToday: todayMembers.length,
+        sentCount: todayMembers.filter(m => m.birthdaySentThisYear).length,
+        pendingCount: todayMembers.filter(m => !m.birthdaySentThisYear && m.hasEmail).length,
+        noEmailCount: todayMembers.filter(m => !m.hasEmail).length,
+        members: todayMembers
+      },
+      next7Days: {
+        count: next7DaysMembers.length,
+        members: next7DaysMembers
+      },
+      currentMonth: {
+        number: currentMonthNum,
+        name: currentMonthName,
+        shortName: BIRTHDAY_MONTH_SHORT[now.getMonth()],
+        count: monthlyCounts[now.getMonth()].count
+      },
+      monthlyCounts,
+      totalCelebrantsWithDob: parsedContacts.length
+    });
+  } catch (error) {
+    console.error('Error in /api/birthdays/overview:', error);
+    res.status(500).json({ error: 'Database error fetching birthday overview' });
+  }
+});
+
+// GET /api/birthdays/next-7-days (Authenticated - Next 7 Days Celebrants)
+app.get('/api/birthdays/next-7-days', authenticateToken, async (req, res) => {
+  try {
+    const allContacts = await query(`
+      SELECT id, s_no, acc_code, account_name, mobile_number, email_id, 
+             date_of_birth, date_of_join, blood_group, photo_filename, birthday_sent_year,
+             district, emirate, area
+      FROM contacts
+      WHERE account_status != 'Inactive'
+        AND date_of_birth IS NOT NULL
+        AND date_of_birth != ''
+        AND date_of_birth != 'N/A'
+    `);
+
+    const now = new Date();
+    const upcoming7 = [];
+
+    for (const c of allContacts) {
+      const parsed = parseContactBirthday(c, now);
+      if (parsed && parsed.diffDays >= 0 && parsed.diffDays <= 7) {
+        upcoming7.push(parsed);
+      }
+    }
+
+    upcoming7.sort((a, b) => a.diffDays - b.diffDays);
+    res.json({ count: upcoming7.length, members: upcoming7 });
+  } catch (error) {
+    console.error('Error in /api/birthdays/next-7-days:', error);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+// GET /api/birthdays/by-month/:month (Authenticated - Celebrants for specific month 1-12)
+app.get('/api/birthdays/by-month/:month', authenticateToken, async (req, res) => {
+  try {
+    const monthNum = parseInt(req.params.month, 10);
+    if (isNaN(monthNum) || monthNum < 1 || monthNum > 12) {
+      return res.status(400).json({ error: 'Invalid month parameter. Must be 1 to 12.' });
+    }
+
+    const allContacts = await query(`
+      SELECT id, s_no, acc_code, account_name, mobile_number, email_id, 
+             date_of_birth, date_of_join, blood_group, photo_filename, birthday_sent_year,
+             district, emirate, area
+      FROM contacts
+      WHERE account_status != 'Inactive'
+        AND date_of_birth IS NOT NULL
+        AND date_of_birth != ''
+        AND date_of_birth != 'N/A'
+    `);
+
+    const now = new Date();
+    const monthMembers = [];
+
+    for (const c of allContacts) {
+      const parsed = parseContactBirthday(c, now);
+      if (parsed && parsed.month === monthNum) {
+        monthMembers.push(parsed);
+      }
+    }
+
+    // Sort by day of the month ascending
+    monthMembers.sort((a, b) => a.day - b.day);
+
+    res.json({
+      month: monthNum,
+      monthName: BIRTHDAY_MONTH_NAMES[monthNum - 1],
+      shortName: BIRTHDAY_MONTH_SHORT[monthNum - 1],
+      count: monthMembers.length,
+      members: monthMembers
+    });
+  } catch (error) {
+    console.error('Error in /api/birthdays/by-month:', error);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
 // Helper: Send single birthday email
 const sendBirthdayEmailToContact = async (contact) => {
   const transporter = getEmailTransporter();
@@ -2684,6 +2899,96 @@ app.post('/api/email/settings', authenticateToken, requireAdmin, (req, res) => {
     res.status(500).json({ error: 'Failed to update settings' });
   }
 });
+
+// ==========================================
+// AUTOMATED BACKUPS & MASTER EXPORT APIS
+// ==========================================
+const backupService = new BackupService({
+  getDb: () => db,
+  query,
+  getIsPostgres: () => isPostgres,
+  dbPath,
+  backupsDir: path.join(__dirname, 'backups'),
+  getEmailTransporter
+});
+
+// GET /api/backup/status (Admin Only)
+app.get('/api/backup/status', authenticateToken, requireAdmin, (req, res) => {
+  try {
+    const status = backupService.getStatus();
+    res.json(status);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/backup/list (Admin Only)
+app.get('/api/backup/list', authenticateToken, requireAdmin, (req, res) => {
+  try {
+    const backups = backupService.listBackups();
+    res.json({ success: true, backups });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/backup/create (Admin Only)
+app.post('/api/backup/create', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const result = await backupService.executeFullBackupCycle();
+    res.json(result);
+  } catch (err) {
+    console.error('Backup creation failed:', err);
+    res.status(500).json({ error: err.message || 'Failed to generate backup' });
+  }
+});
+
+// GET /api/backup/download/:filename (Admin Only)
+app.get('/api/backup/download/:filename', authenticateToken, requireAdmin, (req, res) => {
+  const { filename } = req.params;
+  const safeFilename = path.basename(filename);
+  const filePath = path.join(backupService.backupsDir, safeFilename);
+
+  if (!fs.existsSync(filePath)) {
+    return res.status(404).json({ error: 'Requested backup file not found' });
+  }
+
+  res.download(filePath, safeFilename);
+});
+
+// DELETE /api/backup/:filename (Admin Only)
+app.delete('/api/backup/:filename', authenticateToken, requireAdmin, (req, res) => {
+  const { filename } = req.params;
+  const safeFilename = path.basename(filename);
+  const filePath = path.join(backupService.backupsDir, safeFilename);
+
+  if (!fs.existsSync(filePath)) {
+    return res.status(404).json({ error: 'File not found' });
+  }
+
+  try {
+    fs.unlinkSync(filePath);
+    res.json({ success: true, message: `Backup ${safeFilename} deleted successfully` });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Automated Daily / Scheduled Backup Cron
+try {
+  const backupCronExpr = process.env.BACKUP_SCHEDULE_CRON || '0 23 * * *'; // Default 23:00 GST daily
+  cron.schedule(backupCronExpr, async () => {
+    console.log(`[CRON] Executing scheduled campaign backup (${backupCronExpr})...`);
+    try {
+      await backupService.executeFullBackupCycle();
+    } catch (bErr) {
+      console.error('[CRON BACKUP ERROR]', bErr.message);
+    }
+  });
+  console.log(`[CRON] Automated Backup Scheduler initialized (${backupCronExpr}).`);
+} catch (cronErr) {
+  console.warn('[CRON] Could not start backup scheduler:', cronErr.message);
+}
 
 // Setup automated daily birthday check at 08:00 AM
 try {

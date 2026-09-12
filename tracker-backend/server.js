@@ -10,6 +10,7 @@ const nodemailer = require('nodemailer');
 const cron = require('node-cron');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const compression = require('compression');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'ias-election-campaign-tracker-secure-token-secret-key-2026';
 
@@ -32,6 +33,15 @@ app.use(cors({
   credentials: true
 }));
 
+// Performance: Gzip compression for all API responses over 1KB
+app.use(compression({
+  threshold: 1024,
+  filter: (req, res) => {
+    if (req.headers['x-no-compression']) return false;
+    return compression.filter(req, res);
+  }
+}));
+
 // Increase body limits to 50mb to safely support bulk imports and webhook payloads
 app.use(express.json({
   limit: '50mb',
@@ -41,8 +51,12 @@ app.use(express.json({
 }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
-// Serve member photos statically from extracted_photos directory
-app.use('/photos', express.static(path.join(__dirname, 'extracted_photos')));
+// Serve member photos statically with 7-day browser caching
+app.use('/photos', express.static(path.join(__dirname, 'extracted_photos'), {
+  maxAge: '7d',
+  immutable: true,
+  etag: true
+}));
 
 const fs = require('fs');
 let dbDir = process.env.DATABASE_DIR || __dirname;
@@ -309,6 +323,25 @@ const initPostgresDB = async () => {
       `);
     } catch (smsErr) {
       console.warn('PostgreSQL incoming_sms table check note:', smsErr.message);
+    }
+
+    // Performance: Create PostgreSQL B-Tree indexes for instant lookups
+    const pgIndexes = [
+      "CREATE INDEX IF NOT EXISTS idx_contacts_acc_code ON contacts (acc_code)",
+      "CREATE INDEX IF NOT EXISTS idx_contacts_assigned_to ON contacts (assigned_to)",
+      "CREATE INDEX IF NOT EXISTS idx_contacts_blood_group ON contacts (blood_group)",
+      "CREATE INDEX IF NOT EXISTS idx_contacts_mobile ON contacts (mobile_number)",
+      "CREATE INDEX IF NOT EXISTS idx_contacts_call_status ON contacts (call_status)",
+      "CREATE INDEX IF NOT EXISTS idx_contacts_reaction ON contacts (member_reaction)",
+      "CREATE INDEX IF NOT EXISTS idx_users_username ON users (username)",
+      "CREATE INDEX IF NOT EXISTS idx_incoming_sms_contact_id ON incoming_sms (contact_id)"
+    ];
+    for (const idxSql of pgIndexes) {
+      try {
+        await pgPool.query(idxSql);
+      } catch (idxErr) {
+        console.warn(`[PostgreSQL Index Note] ${idxSql}:`, idxErr.message);
+      }
     }
 
     // Verify row count to decide on pre-seeding
@@ -578,6 +611,23 @@ const initSqliteDB = () => {
           created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )`, (err) => {
           if (err) console.error("Error creating SQLite incoming_sms table:", err.message);
+        });
+
+        // Performance: Create SQLite B-Tree indexes for instant lookups
+        const sqliteIndexes = [
+          "CREATE INDEX IF NOT EXISTS idx_contacts_acc_code ON contacts (acc_code)",
+          "CREATE INDEX IF NOT EXISTS idx_contacts_assigned_to ON contacts (assigned_to)",
+          "CREATE INDEX IF NOT EXISTS idx_contacts_blood_group ON contacts (blood_group)",
+          "CREATE INDEX IF NOT EXISTS idx_contacts_mobile ON contacts (mobile_number)",
+          "CREATE INDEX IF NOT EXISTS idx_contacts_call_status ON contacts (call_status)",
+          "CREATE INDEX IF NOT EXISTS idx_contacts_reaction ON contacts (member_reaction)",
+          "CREATE INDEX IF NOT EXISTS idx_users_username ON users (username)",
+          "CREATE INDEX IF NOT EXISTS idx_incoming_sms_contact_id ON incoming_sms (contact_id)"
+        ];
+        sqliteIndexes.forEach(idxSql => {
+          db.run(idxSql, (idxErr) => {
+            if (idxErr) console.warn(`[SQLite Index Note] ${idxSql}:`, idxErr.message);
+          });
         });
 
         // Run volunteers seeding and Excel sync ONLY if SQLite database is completely empty on startup

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { 
   Users, Mail, Phone, MessageSquare, AlertTriangle, Search, 
   ChevronLeft, ChevronRight, CheckCircle, Clock, Edit2, 
@@ -8,7 +8,15 @@ import {
   Image as ImageIcon, Droplet, Cake, Calendar, Heart,
   Shield, Lock, LogOut, Key, Eye, EyeOff, UserCheck
 } from 'lucide-react';
-import * as XLSX from 'xlsx';
+
+// Performance: Lazy on-demand dynamic loader for heavy XLSX library (~350KB)
+let _xlsxPromise = null;
+const getXLSX = () => {
+  if (!_xlsxPromise) {
+    _xlsxPromise = import('xlsx');
+  }
+  return _xlsxPromise;
+};
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001/api';
 const PHOTO_BASE = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001/api').replace(/\/api\/?$/, '') + '/photos';
@@ -52,6 +60,50 @@ const DEFAULT_TEMPLATES = {
   birthday: "Dear {Name},\n\nOn behalf of Indian Association Sharjah, we wish you a very Happy Birthday! 🎂✨ May this year bring you boundless happiness, enduring vitality, and great success in all your endeavors.\n\nWarm regards,\nIndian Association Sharjah",
   bloodRequest: "🚨 URGENT BLOOD DONATION REQUEST\n\nDear {Name},\n\nAn urgent blood donation (Blood Group: {BloodGroup}) is required for a patient in emergency care.\n\n🏥 Hospital: {Hospital}\n👤 Patient: {Patient}\n🩸 Blood Group: {BloodGroup}\n\nIf you or someone you know can donate, please contact immediately. Your timely support can save a life! 🙏"
 };
+
+// Performance: Isolated CountdownClock component preventing 1-second interval re-renders in root App
+function CountdownClock() {
+  const [timeLeft, setTimeLeft] = useState(() => {
+    const targetDate = new Date('2026-09-06T08:00:00+04:00');
+    const diff = targetDate - new Date();
+    if (diff <= 0) return { days: 0, hours: 0, minutes: 0, seconds: 0 };
+    return {
+      days: Math.floor(diff / (1000 * 60 * 60 * 24)),
+      hours: Math.floor((diff / (1000 * 60 * 60)) % 24),
+      minutes: Math.floor((diff / 1000 / 60) % 60),
+      seconds: Math.floor((diff / 1000) % 60)
+    };
+  });
+
+  useEffect(() => {
+    const targetDate = new Date('2026-09-06T08:00:00+04:00');
+    const interval = setInterval(() => {
+      const diff = targetDate - new Date();
+      if (diff <= 0) {
+        setTimeLeft({ days: 0, hours: 0, minutes: 0, seconds: 0 });
+        clearInterval(interval);
+      } else {
+        setTimeLeft({
+          days: Math.floor(diff / (1000 * 60 * 60 * 24)),
+          hours: Math.floor((diff / (1000 * 60 * 60)) % 24),
+          minutes: Math.floor((diff / 1000 / 60) % 60),
+          seconds: Math.floor((diff / 1000) % 60)
+        });
+      }
+    }, 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+  return (
+    <div className="countdown-container">
+      <Clock size={16} color="#10b981" />
+      <span className="countdown-label">Time to election:</span>
+      <div className="countdown-clock">
+        {timeLeft.days}d {timeLeft.hours}h {timeLeft.minutes}m {timeLeft.seconds}s
+      </div>
+    </div>
+  );
+}
 
 export default function App() {
   // Phase 1 (Security): Authentication & Access Control States
@@ -296,9 +348,6 @@ export default function App() {
     { sno: 18, name: 'ROY MATHEW', post: 'Managing Committee Member', isFeatured: false },
     { sno: 20, name: 'SHANTY THOMAS CHERUVATHOOR', post: 'Managing Committee Member', isFeatured: false }
   ]);
-
-  // Countdown timer state
-  const [timeLeft, setTimeLeft] = useState({ days: 0, hours: 0, minutes: 0, seconds: 0 });
 
   // Get Today's Date String
   const getTodayString = () => new Date().toISOString().split('T')[0];
@@ -729,29 +778,6 @@ export default function App() {
       setAssignedToFilter(currentUser.volunteer_name);
     }
   }, [currentUser]);
-
-  // Countdown timer effect
-  useEffect(() => {
-    const targetDate = new Date('2026-09-06T08:00:00+04:00'); // Selection Date & Time
-    
-    const interval = setInterval(() => {
-      const now = new Date();
-      const difference = targetDate - now;
-
-      if (difference <= 0) {
-        setTimeLeft({ days: 0, hours: 0, minutes: 0, seconds: 0 });
-        clearInterval(interval);
-      } else {
-        const days = Math.floor(difference / (1000 * 60 * 60 * 24));
-        const hours = Math.floor((difference / (1000 * 60 * 60)) % 24);
-        const minutes = Math.floor((difference / 1000 / 60) % 60);
-        const seconds = Math.floor((difference / 1000) % 60);
-        setTimeLeft({ days, hours, minutes, seconds });
-      }
-    }, 1000);
-
-    return () => clearInterval(interval);
-  }, []);
 
   // Toggle Theme
   const toggleTheme = () => {
@@ -1269,7 +1295,7 @@ export default function App() {
   };
 
   // Download Master Contacts Template (.xlsx or .csv)
-  const handleDownloadMasterTemplate = (format = 'xlsx') => {
+  const handleDownloadMasterTemplate = async (format = 'xlsx') => {
     const headers = [
       'AccCode',
       'AccountName',
@@ -1359,6 +1385,7 @@ export default function App() {
       document.body.removeChild(link);
     } else {
       // XLSX format
+      const XLSX = await getXLSX();
       const wsData = [headers, ...sampleRows];
       const ws = XLSX.utils.aoa_to_sheet(wsData);
       
@@ -1654,8 +1681,9 @@ export default function App() {
     const isExcel = file.name.endsWith('.xlsx') || file.name.endsWith('.xls');
 
     if (isExcel) {
-      reader.onload = (e) => {
+      reader.onload = async (e) => {
         try {
+          const XLSX = await getXLSX();
           const data = new Uint8Array(e.target.result);
           const workbook = XLSX.read(data, { type: 'array' });
           const firstSheetName = workbook.SheetNames[0];
@@ -1669,8 +1697,9 @@ export default function App() {
       };
       reader.readAsArrayBuffer(file);
     } else {
-      reader.onload = (e) => {
+      reader.onload = async (e) => {
         try {
+          const XLSX = await getXLSX();
           const text = e.target.result;
           const workbook = XLSX.read(text, { type: 'string' });
           const firstSheetName = workbook.SheetNames[0];
@@ -1687,13 +1716,14 @@ export default function App() {
   };
 
   // Handle pasted table analysis
-  const handleAnalyzePastedMasterText = () => {
+  const handleAnalyzePastedMasterText = async () => {
     setMasterImportError('');
     if (!masterImportRawText.trim()) {
       setMasterImportError('Please paste your table or CSV data into the box above.');
       return;
     }
     try {
+      const XLSX = await getXLSX();
       const workbook = XLSX.read(masterImportRawText, { type: 'string' });
       const firstSheetName = workbook.SheetNames[0];
       const worksheet = workbook.Sheets[firstSheetName];
@@ -2261,7 +2291,7 @@ export default function App() {
   };
 
   // Export specifically formatted for Bulk WhatsApp Software with 100% preserved emojis
-  const handleExportWhatsAppBulkSender = (format = 'xlsx') => {
+  const handleExportWhatsAppBulkSender = async (format = 'xlsx') => {
     const listToExport = filteredContacts.length > 0 ? filteredContacts : contacts;
     if (listToExport.length === 0) {
       alert('No contacts available to export.');
@@ -2287,6 +2317,7 @@ export default function App() {
     const dateStr = getTodayString();
 
     if (format === 'xlsx') {
+      const XLSX = await getXLSX();
       const worksheet = XLSX.utils.json_to_sheet(dataRows);
       const workbook = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(workbook, worksheet, 'Bulk WhatsApp');
@@ -2368,8 +2399,8 @@ export default function App() {
     }
   };
 
-  // Filter Contacts
-  const getFilteredContacts = () => {
+  // Performance: Memoized Filter Contacts with O(n) Set duplicate lookups
+  const filteredContacts = useMemo(() => {
     let list = [...contacts];
 
     // Filter by Active Status depending on current view
@@ -2419,13 +2450,27 @@ export default function App() {
       if (qualityFilter === 'Missing Email') {
         list = list.filter(c => !c.email_id);
       } else if (qualityFilter === 'Duplicate Email') {
-        const emails = list.map(c => c.email_id).filter(e => e);
-        const dups = emails.filter((item, index) => emails.indexOf(item) !== index);
-        list = list.filter(c => c.email_id && dups.includes(c.email_id));
+        const seen = new Set();
+        const dups = new Set();
+        for (const c of list) {
+          if (c.email_id) {
+            const e = c.email_id.toLowerCase().trim();
+            if (seen.has(e)) dups.add(e);
+            else seen.add(e);
+          }
+        }
+        list = list.filter(c => c.email_id && dups.has(c.email_id.toLowerCase().trim()));
       } else if (qualityFilter === 'Duplicate Mobile') {
-        const mobiles = list.map(c => c.mobile_number).filter(m => m);
-        const dups = mobiles.filter((item, index) => mobiles.indexOf(item) !== index);
-        list = list.filter(c => c.mobile_number && dups.includes(c.mobile_number));
+        const seen = new Set();
+        const dups = new Set();
+        for (const c of list) {
+          if (c.mobile_number) {
+            const m = c.mobile_number.trim();
+            if (seen.has(m)) dups.add(m);
+            else seen.add(m);
+          }
+        }
+        list = list.filter(c => c.mobile_number && dups.has(c.mobile_number.trim()));
       }
     }
 
@@ -2450,16 +2495,19 @@ export default function App() {
     }
 
     return list;
-  };
+  }, [contacts, activeTab, statusFilter, searchQuery, emailFilter, callFilter, whatsappFilter, smsFilter, qualityFilter, sentimentFilter, districtFilter, bloodGroupFilter, assignedToFilter]);
 
-  const filteredContacts = getFilteredContacts();
   const totalItems = filteredContacts.length;
   const totalPages = Math.ceil(totalItems / itemsPerPage);
   const startIndex = (currentPage - 1) * itemsPerPage;
-  const paginatedContacts = filteredContacts.slice(startIndex, startIndex + itemsPerPage);
+  const paginatedContacts = useMemo(() => {
+    return filteredContacts.slice(startIndex, startIndex + itemsPerPage);
+  }, [filteredContacts, startIndex, itemsPerPage]);
 
-  // Get unique districts dynamically from loaded contacts list
-  const uniqueDistricts = [...new Set(contacts.map(c => c.district).filter(Boolean))].sort();
+  // Performance: Memoized unique districts set
+  const uniqueDistricts = useMemo(() => {
+    return [...new Set(contacts.map(c => c.district).filter(Boolean))].sort();
+  }, [contacts]);
 
   const handlePageChange = (newPage) => {
     if (newPage >= 1 && newPage <= totalPages) {
@@ -2467,17 +2515,15 @@ export default function App() {
     }
   };
 
-  // Exit Poll rapid filter matching
-  const getExitPollMatches = () => {
+  // Performance: Memoized Exit Poll rapid filter matching
+  const exitPollMatches = useMemo(() => {
     if (!exitPollSearch.trim()) return [];
     const q = exitPollSearch.toLowerCase().trim();
     return contacts.filter(c => 
       (c.acc_code && c.acc_code.toLowerCase().includes(q)) ||
       (c.account_name && c.account_name.toLowerCase().includes(q))
     ).slice(0, 10); // Limit to top 10 for rapid visibility and performance
-  };
-
-  const exitPollMatches = getExitPollMatches();
+  }, [contacts, exitPollSearch]);
 
   // Toggle selection for bulk actions
   const toggleContactSelect = (id) => {
@@ -2623,27 +2669,29 @@ export default function App() {
   const securedVotes = Number(stats.exitPoll?.secured) || 0;
   const exitPollProgressPct = Math.min((securedVotes / exitPollTarget) * 100, 100);
 
-  // SVG Donut Chart calculation values
-  const rReaction = stats.reactions;
-  const reactionValues = [
-    { key: 'strong', value: Number(rReaction.strong) || 0, ...SENTIMENT_META.strong },
-    { key: 'leaning', value: Number(rReaction.leaning) || 0, ...SENTIMENT_META.leaning },
-    { key: 'undecided', value: Number(rReaction.undecided) || 0, ...SENTIMENT_META.undecided },
-    { key: 'opposed', value: Number(rReaction.opposed) || 0, ...SENTIMENT_META.opposed },
-    { key: 'unknown', value: Number(rReaction.unknown) || 0, ...SENTIMENT_META.unknown }
-  ];
-  
-  const totalSentimentResponses = reactionValues.reduce((sum, item) => sum + item.value, 0) || 1;
+  // Performance: Memoize SVG Donut Chart calculation values
+  const donutSlices = useMemo(() => {
+    if (!stats || !stats.reactions) return [];
+    const rReaction = stats.reactions;
+    const reactionValues = [
+      { key: 'strong', value: Number(rReaction.strong) || 0, ...SENTIMENT_META.strong },
+      { key: 'leaning', value: Number(rReaction.leaning) || 0, ...SENTIMENT_META.leaning },
+      { key: 'undecided', value: Number(rReaction.undecided) || 0, ...SENTIMENT_META.undecided },
+      { key: 'opposed', value: Number(rReaction.opposed) || 0, ...SENTIMENT_META.opposed },
+      { key: 'unknown', value: Number(rReaction.unknown) || 0, ...SENTIMENT_META.unknown }
+    ];
+    
+    const totalSentimentResponses = reactionValues.reduce((sum, item) => sum + item.value, 0) || 1;
 
-  // Compute circles positions for SVG Donut
-  let accumulatedPct = 0;
-  const donutSlices = reactionValues.map(item => {
-    const percentage = (item.value / totalSentimentResponses) * 100;
-    const strokeDasharray = `${percentage} ${100 - percentage}`;
-    const strokeDashoffset = 100 - accumulatedPct + 25; // Rotated offset (start at 12 o'clock)
-    accumulatedPct += percentage;
-    return { ...item, strokeDasharray, strokeDashoffset, percentage };
-  });
+    let accumulatedPct = 0;
+    return reactionValues.map(item => {
+      const percentage = (item.value / totalSentimentResponses) * 100;
+      const strokeDasharray = `${percentage} ${100 - percentage}`;
+      const strokeDashoffset = 100 - accumulatedPct + 25; // Rotated offset (start at 12 o'clock)
+      accumulatedPct += percentage;
+      return { ...item, strokeDasharray, strokeDashoffset, percentage };
+    });
+  }, [stats]);
 
   return (
     <div className="app-container">
@@ -2790,13 +2838,7 @@ export default function App() {
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
-            <div className="countdown-container">
-              <Clock size={16} color="#10b981" />
-              <span className="countdown-label">Time to election:</span>
-              <div className="countdown-clock">
-                {timeLeft.days}d {timeLeft.hours}h {timeLeft.minutes}m {timeLeft.seconds}s
-              </div>
-            </div>
+            <CountdownClock />
 
             {/* User Profile Badge & Session Controls */}
             {currentUser && (

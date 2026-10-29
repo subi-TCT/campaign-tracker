@@ -20,7 +20,11 @@ import {
   Droplet,
   ExternalLink,
   MapPin,
-  Heart
+  Heart,
+  Save,
+  Server,
+  Eye,
+  EyeOff
 } from 'lucide-react';
 
 const MONTH_NAMES = [
@@ -63,6 +67,19 @@ export default function BirthdayCelebrantsHub({
   const [testEmailAddress, setTestEmailAddress] = useState('');
   const [sendingTestEmail, setSendingTestEmail] = useState(false);
 
+  // Email / SMTP & BCC Settings state
+  const [emailSettings, setEmailSettings] = useState(null);
+  const [loadingSettings, setLoadingSettings] = useState(false);
+  const [smtpHostInput, setSmtpHostInput] = useState('smtp.gmail.com');
+  const [smtpPortInput, setSmtpPortInput] = useState('587');
+  const [smtpUserInput, setSmtpUserInput] = useState('');
+  const [smtpPassInput, setSmtpPassInput] = useState('');
+  const [showSmtpPass, setShowSmtpPass] = useState(false);
+  const [bccInput, setBccInput] = useState('');
+  const [fromInput, setFromInput] = useState('');
+  const [savingSettings, setSavingSettings] = useState(false);
+  const [settingsMsg, setSettingsMsg] = useState({ type: '', text: '' });
+
   // Initial load
   useEffect(() => {
     fetchOverview();
@@ -74,6 +91,8 @@ export default function BirthdayCelebrantsHub({
       fetchMonthData(selectedMonth);
     } else if (subTab === 'next7') {
       fetchNext7Data();
+    } else if (subTab === 'settings') {
+      fetchEmailSettings();
     }
   }, [subTab, selectedMonth]);
 
@@ -184,6 +203,78 @@ export default function BirthdayCelebrantsHub({
     }
   };
 
+  // Fetch email and BCC settings
+  const fetchEmailSettings = async () => {
+    setLoadingSettings(true);
+    setSettingsMsg({ type: '', text: '' });
+    try {
+      const res = await fetch(`${API_BASE}/email/settings`, {
+        headers: { Authorization: `Bearer ${authToken}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setEmailSettings(data);
+        if (data.host) setSmtpHostInput(data.host);
+        if (data.port) setSmtpPortInput(String(data.port));
+        if (data.user) setSmtpUserInput(data.user);
+        setBccInput(data.bcc || '');
+        setFromInput(data.from || '');
+      }
+    } catch (err) {
+      console.error('Failed to load email settings:', err);
+    } finally {
+      setLoadingSettings(false);
+    }
+  };
+
+  // Save email and BCC settings
+  const handleSaveEmailSettings = async (e) => {
+    if (e) e.preventDefault();
+    setSavingSettings(true);
+    setSettingsMsg({ type: '', text: '' });
+    try {
+      const payload = {
+        host: smtpHostInput.trim(),
+        port: smtpPortInput.trim(),
+        user: smtpUserInput.trim(),
+        from: fromInput.trim(),
+        bcc: bccInput.trim()
+      };
+      if (smtpPassInput.trim()) {
+        payload.pass = smtpPassInput.trim();
+      }
+      const res = await fetch(`${API_BASE}/email/settings`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${authToken}`
+        },
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setSettingsMsg({ type: 'success', text: '✅ Email & SMTP credentials successfully saved!' });
+        setEmailSettings(prev => ({
+          ...(prev || {}),
+          isConfigured: data.isConfigured,
+          hasPassword: data.hasPassword,
+          host: payload.host,
+          port: payload.port,
+          user: payload.user,
+          from: payload.from,
+          bcc: payload.bcc
+        }));
+        setSmtpPassInput('');
+      } else {
+        setSettingsMsg({ type: 'error', text: data.error || 'Failed to update settings.' });
+      }
+    } catch (err) {
+      setSettingsMsg({ type: 'error', text: err.message });
+    } finally {
+      setSavingSettings(false);
+    }
+  };
+
   // Send test email
   const handleSendTestEmail = async () => {
     if (!testEmailAddress || !testEmailAddress.includes('@')) {
@@ -198,11 +289,15 @@ export default function BirthdayCelebrantsHub({
           'Content-Type': 'application/json',
           Authorization: `Bearer ${authToken}`
         },
-        body: JSON.stringify({ email: testEmailAddress.trim() })
+        body: JSON.stringify({
+          testEmail: testEmailAddress.trim(),
+          email: testEmailAddress.trim()
+        })
       });
       const data = await res.json();
       if (res.ok) {
-        alert(`Test celebratory card delivered to ${testEmailAddress}! Check your inbox.`);
+        const bccNote = data.bcc ? ` (BCC: ${data.bcc})` : '';
+        alert(`🎉 Test celebratory card delivered to ${testEmailAddress}${bccNote}! Check your inbox.`);
       } else {
         alert(`Error: ${data.error || 'Could not dispatch test email.'}`);
       }
@@ -1157,42 +1252,237 @@ With warmest regards & best wishes,
               </p>
               <div style={{ borderTop: '1px solid #e2e8f0', paddingTop: 12, fontSize: 12, color: '#64748b' }}>
                 <strong>With Warmest Felicitations & Respect,</strong><br />
-                <span style={{ color: '#4338ca', fontWeight: 700 }}>Anil Kumar K G Pillai & The Joint 7-Candidate Democratic Panel</span><br />
+                <span style={{ color: '#4338ca', fontWeight: 700 }}>Indian Association Sharjah Community & Outreach Team</span><br />
                 Indian Association Sharjah
               </div>
             </div>
           </div>
 
-          {/* Test Sender & Scheduler Info */}
+          {/* Card 2: Email SMTP Server & BCC Delivery Settings */}
           <div style={{ background: 'var(--color-surface)', border: '1px solid var(--border-color)', borderRadius: 12, padding: 20, display: 'flex', flexDirection: 'column', gap: 16 }}>
             <div>
-              <h3 style={{ margin: '0 0 8px 0', fontSize: 15, color: 'var(--color-text-white)', display: 'flex', alignItems: 'center', gap: 8 }}>
-                <Send size={16} color="#34d399" /> Send Test Birthday Greeting
-              </h3>
-              <p style={{ margin: 0, fontSize: 12, color: 'var(--color-text-muted)' }}>
-                Dispatch a sample greeting card to test SMTP delivery to your inbox.
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8, marginBottom: 4 }}>
+                <h3 style={{ margin: 0, fontSize: 15, color: 'var(--color-text-white)', display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <Server size={16} color="#38bdf8" /> SMTP Credentials & Delivery Settings
+                </h3>
+                <span style={{
+                  fontSize: 11,
+                  fontWeight: 600,
+                  padding: '3px 8px',
+                  borderRadius: 12,
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 4,
+                  background: emailSettings?.isConfigured ? 'rgba(16, 185, 129, 0.15)' : 'rgba(239, 68, 68, 0.15)',
+                  color: emailSettings?.isConfigured ? '#34d399' : '#f87171',
+                  border: `1px solid ${emailSettings?.isConfigured ? 'rgba(16, 185, 129, 0.3)' : 'rgba(239, 68, 68, 0.3)'}`
+                }}>
+                  {emailSettings?.isConfigured ? (
+                    <>
+                      <CheckCircle size={12} /> SMTP Configured
+                    </>
+                  ) : (
+                    <>
+                      <AlertCircle size={12} /> SMTP Missing (Action Required)
+                    </>
+                  )}
+                </span>
+              </div>
+              <p style={{ margin: 0, fontSize: 12, color: 'var(--color-text-muted)', lineHeight: 1.5 }}>
+                Configure the outgoing mail server, account credentials, and automated BCC monitoring address.
               </p>
             </div>
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              <input
-                type="email"
-                className="drawer-input"
-                placeholder="Enter recipient email (e.g. director@campaign.com)"
-                value={testEmailAddress}
-                onChange={(e) => setTestEmailAddress(e.target.value)}
-                style={{ fontSize: 12 }}
-              />
-              <button
-                type="button"
-                className="btn btn-primary"
-                onClick={handleSendTestEmail}
-                disabled={sendingTestEmail}
-                style={{ padding: '8px 16px', fontSize: 12, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
-              >
-                <Send size={13} className={sendingTestEmail ? 'spinning' : ''} />
-                {sendingTestEmail ? 'Sending...' : 'Send Test Card to Inbox'}
-              </button>
+            {!emailSettings?.isConfigured && (
+              <div style={{
+                padding: '10px 14px',
+                borderRadius: 8,
+                fontSize: 12,
+                background: 'rgba(245, 158, 11, 0.12)',
+                color: '#fbbf24',
+                border: '1px solid rgba(245, 158, 11, 0.3)',
+                lineHeight: 1.5
+              }}>
+                <strong>⚠️ SMTP Credentials Missing:</strong> Please enter your SMTP Username & Password below to enable automated email sending. For Gmail, use an <strong>App Password</strong> (16 characters from Google Account &gt; Security &gt; 2-Step Verification &gt; App Passwords).
+              </div>
+            )}
+
+            {settingsMsg.text && (
+              <div style={{
+                padding: '8px 12px',
+                borderRadius: 6,
+                fontSize: 12,
+                background: settingsMsg.type === 'success' ? 'rgba(16, 185, 129, 0.15)' : 'rgba(239, 68, 68, 0.15)',
+                color: settingsMsg.type === 'success' ? '#34d399' : '#f87171',
+                border: `1px solid ${settingsMsg.type === 'success' ? 'rgba(16, 185, 129, 0.3)' : 'rgba(239, 68, 68, 0.3)'}`
+              }}>
+                {settingsMsg.text}
+              </div>
+            )}
+
+            <form onSubmit={handleSaveEmailSettings} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 100px', gap: 10 }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: 'var(--color-text-secondary)', marginBottom: 4 }}>
+                    SMTP Host:
+                  </label>
+                  <input
+                    type="text"
+                    className="drawer-input"
+                    placeholder="smtp.gmail.com"
+                    value={smtpHostInput}
+                    disabled={loadingSettings || savingSettings}
+                    onChange={(e) => setSmtpHostInput(e.target.value)}
+                    style={{ fontSize: 12, width: '100%' }}
+                  />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: 'var(--color-text-secondary)', marginBottom: 4 }}>
+                    Port:
+                  </label>
+                  <input
+                    type="text"
+                    className="drawer-input"
+                    placeholder="587"
+                    value={smtpPortInput}
+                    disabled={loadingSettings || savingSettings}
+                    onChange={(e) => setSmtpPortInput(e.target.value)}
+                    style={{ fontSize: 12, width: '100%' }}
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: 'var(--color-text-secondary)', marginBottom: 4 }}>
+                  SMTP Username / Email:
+                </label>
+                <input
+                  type="email"
+                  className="drawer-input"
+                  placeholder="e.g. yourname@gmail.com or office@ias.ae"
+                  value={smtpUserInput}
+                  disabled={loadingSettings || savingSettings}
+                  onChange={(e) => setSmtpUserInput(e.target.value)}
+                  style={{ fontSize: 12, width: '100%' }}
+                />
+              </div>
+
+              <div>
+                <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 11, fontWeight: 600, color: 'var(--color-text-secondary)', marginBottom: 4 }}>
+                  <span>SMTP Password / App Password:</span>
+                  {emailSettings?.hasPassword && (
+                    <span style={{ color: '#34d399', fontSize: 10, fontWeight: 500 }}>
+                      ✓ Password saved (leave blank to keep)
+                    </span>
+                  )}
+                </label>
+                <div style={{ position: 'relative' }}>
+                  <input
+                    type={showSmtpPass ? 'text' : 'password'}
+                    className="drawer-input"
+                    placeholder={emailSettings?.hasPassword ? '•••••••••••••••• (Leave blank to keep)' : 'Enter 16-character App Password'}
+                    value={smtpPassInput}
+                    disabled={loadingSettings || savingSettings}
+                    onChange={(e) => setSmtpPassInput(e.target.value)}
+                    style={{ fontSize: 12, width: '100%', paddingRight: 36 }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowSmtpPass(p => !p)}
+                    style={{
+                      position: 'absolute',
+                      right: 8,
+                      top: '50%',
+                      transform: 'translateY(-50%)',
+                      background: 'none',
+                      border: 'none',
+                      color: 'var(--color-text-muted)',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      padding: 2
+                    }}
+                    title={showSmtpPass ? 'Hide Password' : 'Show Password'}
+                  >
+                    {showSmtpPass ? <EyeOff size={14} /> : <Eye size={14} />}
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: 'var(--color-text-secondary)', marginBottom: 4 }}>
+                  Automatic BCC Recipient(s):
+                </label>
+                <input
+                  type="text"
+                  className="drawer-input"
+                  placeholder="e.g. Anil kumar <akputhoorrajesh@gmail.com>"
+                  value={bccInput}
+                  disabled={loadingSettings || savingSettings}
+                  onChange={(e) => setBccInput(e.target.value)}
+                  style={{ fontSize: 12, width: '100%' }}
+                />
+                <span style={{ fontSize: 11, color: 'var(--color-text-muted)', marginTop: 4, display: 'block' }}>
+                  Every outgoing greeting email will silently BCC this address.
+                </span>
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: 'var(--color-text-secondary)', marginBottom: 4 }}>
+                  Sender From Address (Optional Override):
+                </label>
+                <input
+                  type="text"
+                  className="drawer-input"
+                  placeholder="e.g. greetings@ias.ae or noreply@ias.ae"
+                  value={fromInput}
+                  disabled={loadingSettings || savingSettings}
+                  onChange={(e) => setFromInput(e.target.value)}
+                  style={{ fontSize: 12, width: '100%' }}
+                />
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', paddingTop: 6 }}>
+                <button
+                  type="submit"
+                  className="btn btn-primary"
+                  disabled={savingSettings}
+                  style={{ padding: '7px 16px', fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                >
+                  <Save size={13} />
+                  {savingSettings ? 'Saving...' : 'Save SMTP & Delivery Settings'}
+                </button>
+              </div>
+            </form>
+
+            {/* Test Sender */}
+            <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: 14 }}>
+              <h4 style={{ margin: '0 0 6px 0', fontSize: 13, color: 'var(--color-text-white)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                <Send size={14} color="#34d399" /> Send Test Birthday Greeting
+              </h4>
+              <p style={{ margin: '0 0 10px 0', fontSize: 12, color: 'var(--color-text-muted)' }}>
+                Dispatch a sample greeting card to test SMTP delivery to your inbox (including BCC).
+              </p>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <input
+                  type="email"
+                  className="drawer-input"
+                  placeholder="Enter recipient email (e.g. director@campaign.com)"
+                  value={testEmailAddress}
+                  onChange={(e) => setTestEmailAddress(e.target.value)}
+                  style={{ fontSize: 12, flexGrow: 1 }}
+                />
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={handleSendTestEmail}
+                  disabled={sendingTestEmail}
+                  style={{ padding: '8px 14px', fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap' }}
+                >
+                  <Send size={13} className={sendingTestEmail ? 'spinning' : ''} />
+                  {sendingTestEmail ? 'Sending...' : 'Send Test'}
+                </button>
+              </div>
             </div>
 
             {/* Automation Status */}
@@ -1202,7 +1492,8 @@ With warmest regards & best wishes,
               </h4>
               <p style={{ margin: 0, fontSize: 12, color: 'var(--color-text-muted)', lineHeight: 1.5 }}>
                 • Cron Schedule: <strong>Daily at 08:00 AM GST</strong> (<code>0 8 * * *</code>)<br />
-                • Automated Duplicate Protection: Records <code>birthday_sent_year = 2026</code> so no member ever receives duplicate wishes.
+                • Automated Duplicate Protection: Records <code>birthday_sent_year = 2026</code> so no member ever receives duplicate wishes.<br />
+                • Automated BCC: <strong>{emailSettings?.bcc || bccInput || 'None'}</strong>
               </p>
             </div>
           </div>

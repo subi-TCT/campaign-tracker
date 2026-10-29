@@ -2743,13 +2743,15 @@ const sendBirthdayEmailToContact = async (contact) => {
   }
 
   const fromEmail = process.env.SMTP_FROM || process.env.SMTP_USER || 'noreply@iascampaign.com';
+  const bccEmail = (process.env.SMTP_BCC || '').trim();
   const htmlContent = generateBirthdayHtml(contact);
 
   const mailOptions = {
     from: `"Indian Association Sharjah" <${fromEmail}>`,
     to: contact.email_id,
     subject: `🎂 Happy Birthday ${contact.account_name}! Warm Wishes from Indian Association Sharjah`,
-    html: htmlContent
+    html: htmlContent,
+    ...(bccEmail ? { bcc: bccEmail } : {})
   };
 
   const info = await transporter.sendMail(mailOptions);
@@ -2822,7 +2824,7 @@ app.post('/api/birthdays/send-single/:id', authenticateToken, async (req, res) =
 
 // POST send test birthday email
 app.post('/api/birthdays/test-email', authenticateToken, requireAdmin, async (req, res) => {
-  const { testEmail } = req.body;
+  const testEmail = req.body.testEmail || req.body.email;
   if (!testEmail || !testEmail.includes('@')) {
     return res.status(400).json({ error: 'A valid testEmail address is required.' });
   }
@@ -2840,16 +2842,18 @@ app.post('/api/birthdays/test-email', authenticateToken, requireAdmin, async (re
     };
 
     const fromEmail = process.env.SMTP_FROM || process.env.SMTP_USER || 'noreply@iascampaign.com';
+    const bccEmail = (process.env.SMTP_BCC || '').trim();
     const htmlContent = generateBirthdayHtml(mockContact);
 
     const info = await transporter.sendMail({
       from: `"Indian Association Sharjah" <${fromEmail}>`,
       to: testEmail,
       subject: `🎂 [Test Preview] Happy Birthday! Warm Wishes from Indian Association Sharjah`,
-      html: htmlContent
+      html: htmlContent,
+      ...(bccEmail ? { bcc: bccEmail } : {})
     });
 
-    res.json({ success: true, messageId: info.messageId, recipient: testEmail });
+    res.json({ success: true, messageId: info.messageId, recipient: testEmail, bcc: bccEmail || null });
   } catch (error) {
     console.error('Error sending test birthday email:', error);
     res.status(500).json({ error: error.message });
@@ -2861,16 +2865,18 @@ app.get('/api/email/settings', authenticateToken, requireAdmin, (req, res) => {
   const isConfigured = !!(process.env.SMTP_USER && process.env.SMTP_PASS);
   res.json({
     isConfigured,
+    hasPassword: !!process.env.SMTP_PASS,
     host: process.env.SMTP_HOST || 'smtp.gmail.com',
     port: process.env.SMTP_PORT || '587',
-    user: process.env.SMTP_USER ? process.env.SMTP_USER.replace(/(.{2})(.*)(@.*)/, '$1***$3') : '',
-    from: process.env.SMTP_FROM || ''
+    user: process.env.SMTP_USER || '',
+    from: process.env.SMTP_FROM || '',
+    bcc: process.env.SMTP_BCC || ''
   });
 });
 
 // POST update email / SMTP settings in .env
 app.post('/api/email/settings', authenticateToken, requireAdmin, (req, res) => {
-  const { host, port, user, pass, from } = req.body;
+  const { host, port, user, pass, from, bcc } = req.body;
   try {
     const envPath = path.join(__dirname, '.env');
     let envContent = fs.existsSync(envPath) ? fs.readFileSync(envPath, 'utf8') : '';
@@ -2886,14 +2892,20 @@ app.post('/api/email/settings', authenticateToken, requireAdmin, (req, res) => {
       process.env[key] = String(val);
     };
 
-    if (host) updateOrAdd('SMTP_HOST', host.trim());
-    if (port) updateOrAdd('SMTP_PORT', String(port).trim());
-    if (user) updateOrAdd('SMTP_USER', user.trim());
-    if (pass) updateOrAdd('SMTP_PASS', pass.trim());
-    if (from) updateOrAdd('SMTP_FROM', from.trim());
+    if (host !== undefined && host.trim()) updateOrAdd('SMTP_HOST', host.trim());
+    if (port !== undefined && port.trim()) updateOrAdd('SMTP_PORT', String(port).trim());
+    if (user !== undefined && user.trim()) updateOrAdd('SMTP_USER', user.trim());
+    if (pass !== undefined && pass.trim()) updateOrAdd('SMTP_PASS', pass.trim());
+    if (from !== undefined) updateOrAdd('SMTP_FROM', from.trim());
+    if (bcc !== undefined) updateOrAdd('SMTP_BCC', bcc.trim());
 
     fs.writeFileSync(envPath, envContent.trim() + '\n', 'utf8');
-    res.json({ success: true, isConfigured: !!(process.env.SMTP_USER && process.env.SMTP_PASS) });
+    res.json({
+      success: true,
+      isConfigured: !!(process.env.SMTP_USER && process.env.SMTP_PASS),
+      hasPassword: !!process.env.SMTP_PASS,
+      bcc: process.env.SMTP_BCC || ''
+    });
   } catch (err) {
     console.error('Error saving email settings:', err);
     res.status(500).json({ error: 'Failed to update settings' });

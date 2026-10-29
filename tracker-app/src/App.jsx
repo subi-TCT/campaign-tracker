@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { 
   Users, Mail, Phone, MessageSquare, AlertTriangle, Search, 
-  ChevronLeft, ChevronRight, CheckCircle, Clock, Edit2, 
+  ChevronLeft, ChevronRight, ChevronDown, CheckCircle, Clock, Edit2, 
   Plus, FileText, Settings, HelpCircle, Save, ExternalLink,
   Sun, Moon, Upload, AlertCircle, X, Vote, Award, BarChart2, Menu,
   Smartphone, Send, Inbox, RefreshCw, Database, Download, MapPin, Copy,
-  Image as ImageIcon, Droplet, Cake, Calendar, Heart,
+  Image as ImageIcon, Droplet, Cake, Heart,
   Shield, Lock, LogOut, Key, Eye, EyeOff, UserCheck
 } from 'lucide-react';
 
@@ -97,6 +97,20 @@ function CountdownClock() {
     return () => clearInterval(interval);
   }, []);
 
+  const isCompleted = timeLeft.days === 0 && timeLeft.hours === 0 && timeLeft.minutes === 0 && timeLeft.seconds === 0;
+
+  if (isCompleted) {
+    return (
+      <div className="countdown-container" style={{ borderColor: 'rgba(16, 185, 129, 0.4)', background: 'rgba(16, 185, 129, 0.08)' }}>
+        <CheckCircle size={16} color="#10b981" />
+        <span className="countdown-label" style={{ color: '#34d399' }}>Campaign Status:</span>
+        <div className="countdown-clock" style={{ color: '#10b981', fontSize: 13, fontWeight: 600 }}>
+          Selection Completed (Sep 6, 2026)
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="countdown-container">
       <Clock size={16} color="#10b981" />
@@ -154,8 +168,15 @@ export default function App() {
   const [theme, setTheme] = useState(localStorage.getItem('theme') || 'dark');
 
   // Navigation
-  const [activeTab, setActiveTab] = useState('dashboard');
+  const [activeTab, setActiveTab] = useState('birthdays');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [campaignMenuOpen, setCampaignMenuOpen] = useState(false);
+
+  const CAMPAIGN_TABS = useMemo(() => [
+    'dashboard', 'excelDashboard', 'exitpoll', 'candidates',
+    'call', 'whatsapp', 'email', 'sms', 'volunteers'
+  ], []);
+  const isCampaignTab = CAMPAIGN_TABS.includes(activeTab);
   
   // Searching & Pagination
   const [searchQuery, setSearchQuery] = useState('');
@@ -793,6 +814,9 @@ export default function App() {
   // Safe tab selector that closes the mobile sidebar drawer
   const selectTab = (tabName, searchReset = false) => {
     setActiveTab(tabName);
+    if (CAMPAIGN_TABS.includes(tabName)) {
+      setCampaignMenuOpen(true);
+    }
     setMobileMenuOpen(false);
     setSelectedVolunteerDetail(null);
     setSelectedContactIds([]);
@@ -2709,6 +2733,68 @@ export default function App() {
     (Number(rReaction.unknown) || 0)
   ) || 1;
 
+  const renderUserProfile = () => {
+    if (!currentUser) return null;
+    return (
+      <div className="user-profile-badge">
+        <div className="user-avatar" title={currentUser.username}>
+          {(currentUser.username || 'U')[0].toUpperCase()}
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--color-text-white)' }}>
+              {currentUser.volunteer_name || currentUser.username}
+            </span>
+            <span className={`badge-role ${currentUser.role || 'volunteer'}`}>
+              {currentUser.role === 'admin' ? <Shield size={10} /> : <UserCheck size={10} />}
+              {currentUser.role}
+            </span>
+          </div>
+        </div>
+
+        {isAdmin && (
+          <button
+            className="btn"
+            onClick={() => { setShowUserManagementModal(true); fetchSystemUsers(); }}
+            title="Manage System User Accounts"
+            style={{ padding: '4px 8px', fontSize: 11, display: 'inline-flex', alignItems: 'center', gap: 4, background: 'rgba(168, 85, 247, 0.15)', color: '#c084fc', border: '1px solid rgba(168, 85, 247, 0.3)' }}
+          >
+            <Users size={12} /> Users
+          </button>
+        )}
+
+        {isAdmin && (
+          <button
+            className="btn"
+            onClick={() => setShowBackupModal(true)}
+            title="Database & Cloud Backups Management"
+            style={{ padding: '4px 8px', fontSize: 11, display: 'inline-flex', alignItems: 'center', gap: 4, background: 'rgba(59, 130, 246, 0.15)', color: '#60a5fa', border: '1px solid rgba(59, 130, 246, 0.3)' }}
+          >
+            <Database size={12} /> Backups
+          </button>
+        )}
+
+        <button
+          className="btn"
+          onClick={() => { setShowChangePasswordModal(true); setChangePasswordMsg({ type: '', text: '' }); }}
+          title="Change Password"
+          style={{ padding: '4px 8px', fontSize: 11, display: 'inline-flex', alignItems: 'center', gap: 4 }}
+        >
+          <Key size={12} /> Password
+        </button>
+
+        <button
+          className="btn"
+          onClick={handleLogout}
+          title="Log Out"
+          style={{ padding: '4px 8px', fontSize: 11, display: 'inline-flex', alignItems: 'center', gap: 4, background: 'rgba(239, 68, 68, 0.15)', color: '#f87171', border: '1px solid rgba(239, 68, 68, 0.3)' }}
+        >
+          <LogOut size={12} /> Logout
+        </button>
+      </div>
+    );
+  };
+
   return (
     <div className="app-container">
       {/* Mobile Top Bar Header */}
@@ -2734,99 +2820,149 @@ export default function App() {
           <div className="brand-logo">AK</div>
           <div className="brand-name">
             <h1>Anil Kumar K G P</h1>
-            <span>Campaign Center</span>
+            <span>Community Services Hub</span>
           </div>
         </div>
 
-        <nav style={{ flexGrow: 1 }}>
+        <nav style={{ flexGrow: 1, overflowY: 'auto' }}>
           <ul className="nav-menu">
+            {/* Primary Focus: Community Services */}
+            <li className="nav-section-label">Community Services</li>
+
             <li className="nav-item">
-              <button className={`nav-link ${activeTab === 'dashboard' ? 'active' : ''}`} onClick={() => selectTab('dashboard', true)}>
-                <Users size={18} />
-                Dashboard Overview
-              </button>
-            </li>
-            <li className="nav-item">
-              <button className={`nav-link ${activeTab === 'excelDashboard' ? 'active' : ''}`} onClick={() => selectTab('excelDashboard')}>
-                <BarChart2 size={18} />
-                Detailed Analytics
-              </button>
-            </li>
-            <li className="nav-item">
-              <button className={`nav-link ${activeTab === 'exitpoll' ? 'active' : ''}`} onClick={() => { selectTab('exitpoll'); setExitPollSearch(''); }}>
-                <Vote size={18} />
-                Exit Poll (Sep 6)
-              </button>
-            </li>
-            <li className="nav-item">
-              <button className={`nav-link ${activeTab === 'candidates' ? 'active' : ''}`} onClick={() => selectTab('candidates')}>
-                <Award size={18} />
-                Our Candidates
-              </button>
-            </li>
-            <li className="nav-item">
-              <button className={`nav-link ${activeTab === 'email' ? 'active' : ''}`} onClick={() => selectTab('email', true)}>
-                <Mail size={18} />
-                Email Campaign
-              </button>
-            </li>
-            <li className="nav-item">
-              <button className={`nav-link ${activeTab === 'call' ? 'active' : ''}`} onClick={() => selectTab('call', true)}>
-                <Phone size={18} />
-                Call Center
-              </button>
-            </li>
-            <li className="nav-item">
-              <button className={`nav-link ${activeTab === 'whatsapp' ? 'active' : ''}`} onClick={() => selectTab('whatsapp', true)}>
-                <MessageSquare size={18} />
-                WhatsApp Campaign
-              </button>
-            </li>
-            <li className="nav-item">
-              <button className={`nav-link ${activeTab === 'sms' ? 'active' : ''}`} onClick={() => selectTab('sms', true)}>
-                <Smartphone size={18} />
-                SMS Campaign (Textbee)
-              </button>
-            </li>
-            <li className="nav-item">
-              <button className={`nav-link ${activeTab === 'quality' ? 'active' : ''}`} onClick={() => selectTab('quality', true)}>
-                <AlertTriangle size={18} />
-                Data Integrity
-              </button>
-            </li>
-            <li className="nav-item">
-              <button className={`nav-link ${activeTab === 'database' ? 'active' : ''}`} onClick={() => selectTab('database', true)}>
-                <FileText size={18} />
-                Master Database
-              </button>
-            </li>
-            <li className="nav-item">
-              <button className={`nav-link ${activeTab === 'bloodbank' ? 'active' : ''}`} onClick={() => selectTab('bloodbank', true)}>
-                <Droplet size={18} color="#ef4444" />
-                Blood Bank Directory
-              </button>
-            </li>
-            <li className="nav-item">
-              <button className={`nav-link ${activeTab === 'birthdays' ? 'active' : ''}`} onClick={() => selectTab('birthdays', true)}>
+              <button 
+                className={`nav-link ${activeTab === 'birthdays' ? 'active' : ''}`} 
+                onClick={() => selectTab('birthdays', true)}
+                title="Greeting Service & Birthday Celebrants Hub"
+              >
                 <Cake size={18} color="#ec4899" />
-                Birthday Celebrants
+                <span>Greeting Service</span>
                 {todayBirthdays?.totalToday > 0 && (
-                  <span className="badge-count" style={{ background: '#ec4899', color: '#fff', marginLeft: 'auto' }}>
-                    {todayBirthdays.totalToday}
+                  <span className="badge-count" style={{ background: '#ec4899', color: '#fff', marginLeft: 'auto', fontSize: 11, padding: '2px 8px', borderRadius: 10 }}>
+                    {todayBirthdays.totalToday} Today
                   </span>
                 )}
               </button>
             </li>
+
             <li className="nav-item">
-              <button className={`nav-link ${activeTab === 'volunteers' ? 'active' : ''}`} onClick={() => selectTab('volunteers', true)}>
-                <Users size={18} />
-                Campaign Volunteers
+              <button 
+                className={`nav-link ${activeTab === 'bloodbank' ? 'active' : ''}`} 
+                onClick={() => selectTab('bloodbank', true)}
+                title="Blood Bank Directory & Emergency Requests"
+              >
+                <Droplet size={18} color="#ef4444" />
+                <span>Blood Bank</span>
               </button>
             </li>
+
+            <li className="nav-item">
+              <button 
+                className={`nav-link ${activeTab === 'database' ? 'active' : ''}`} 
+                onClick={() => selectTab('database', true)}
+                title="Directory Services & Master Contact Database"
+              >
+                <FileText size={18} color="#3b82f6" />
+                <span>Directory Services</span>
+              </button>
+            </li>
+
+            {/* Consolidated Election Campaign Center */}
+            <li className="nav-section-label" style={{ marginTop: 14 }}>Election Campaign</li>
+
+            <li className="nav-item nav-accordion-item">
+              <button 
+                className={`nav-link nav-accordion-toggle ${isCampaignTab ? 'active-parent' : ''}`}
+                onClick={() => {
+                  setCampaignMenuOpen(prev => !prev);
+                  if (!isCampaignTab) {
+                    selectTab('dashboard', true);
+                  }
+                }}
+                title="Election Campaign Center (Sep 2026 Archive)"
+              >
+                <Vote size={18} color="#f59e0b" />
+                <span>Campaign Center</span>
+                <span className="badge-archive" style={{ marginLeft: 'auto', marginRight: 4 }}>
+                  Archive
+                </span>
+                {campaignMenuOpen ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
+              </button>
+
+              {campaignMenuOpen && (
+                <ul className="nav-sub-menu">
+                  <li className="nav-sub-item">
+                    <button className={`nav-sub-link ${activeTab === 'dashboard' ? 'active' : ''}`} onClick={() => selectTab('dashboard', true)}>
+                      <Users size={14} />
+                      <span>Overview & Turnout</span>
+                    </button>
+                  </li>
+                  <li className="nav-sub-item">
+                    <button className={`nav-sub-link ${activeTab === 'excelDashboard' ? 'active' : ''}`} onClick={() => selectTab('excelDashboard')}>
+                      <BarChart2 size={14} />
+                      <span>Detailed Analytics</span>
+                    </button>
+                  </li>
+                  <li className="nav-sub-item">
+                    <button className={`nav-sub-link ${activeTab === 'exitpoll' ? 'active' : ''}`} onClick={() => { selectTab('exitpoll'); setExitPollSearch(''); }}>
+                      <Vote size={14} />
+                      <span>Exit Poll (Sep 6)</span>
+                    </button>
+                  </li>
+                  <li className="nav-sub-item">
+                    <button className={`nav-sub-link ${activeTab === 'candidates' ? 'active' : ''}`} onClick={() => selectTab('candidates')}>
+                      <Award size={14} />
+                      <span>Panel Candidates</span>
+                    </button>
+                  </li>
+                  <li className="nav-sub-item">
+                    <button className={`nav-sub-link ${activeTab === 'call' ? 'active' : ''}`} onClick={() => selectTab('call', true)}>
+                      <Phone size={14} />
+                      <span>Call Center</span>
+                    </button>
+                  </li>
+                  <li className="nav-sub-item">
+                    <button className={`nav-sub-link ${activeTab === 'whatsapp' ? 'active' : ''}`} onClick={() => selectTab('whatsapp', true)}>
+                      <MessageSquare size={14} />
+                      <span>WhatsApp Outreach</span>
+                    </button>
+                  </li>
+                  <li className="nav-sub-item">
+                    <button className={`nav-sub-link ${activeTab === 'email' ? 'active' : ''}`} onClick={() => selectTab('email', true)}>
+                      <Mail size={14} />
+                      <span>Email Outreach</span>
+                    </button>
+                  </li>
+                  <li className="nav-sub-item">
+                    <button className={`nav-sub-link ${activeTab === 'sms' ? 'active' : ''}`} onClick={() => selectTab('sms', true)}>
+                      <Smartphone size={14} />
+                      <span>SMS Outreach</span>
+                    </button>
+                  </li>
+                  <li className="nav-sub-item">
+                    <button className={`nav-sub-link ${activeTab === 'volunteers' ? 'active' : ''}`} onClick={() => selectTab('volunteers', true)}>
+                      <Users size={14} />
+                      <span>Volunteers Roster</span>
+                    </button>
+                  </li>
+                </ul>
+              )}
+            </li>
+
+            {/* System & Tools */}
+            <li className="nav-section-label" style={{ marginTop: 14 }}>System & Tools</li>
+
+            <li className="nav-item">
+              <button className={`nav-link ${activeTab === 'quality' ? 'active' : ''}`} onClick={() => selectTab('quality', true)}>
+                <AlertTriangle size={18} />
+                <span>Data Integrity</span>
+              </button>
+            </li>
+
             <li className="nav-item">
               <button className={`nav-link ${activeTab === 'templates' ? 'active' : ''}`} onClick={() => selectTab('templates', true)}>
                 <Settings size={18} />
-                Message Templates
+                <span>Message Templates</span>
               </button>
             </li>
           </ul>
@@ -2846,88 +2982,126 @@ export default function App() {
         </button>
 
         <div className="sidebar-footer" style={{ marginTop: 12 }}>
-          <p>Campaign Ends:</p>
-          <p style={{ fontWeight: 600, color: 'var(--color-text-white)', marginTop: 4 }}>Sep 6, 2026 @ 8:00 AM</p>
+          <p>Indian Association Sharjah</p>
+          <p style={{ fontWeight: 600, color: 'var(--color-text-white)', marginTop: 4 }}>Community Services Hub</p>
         </div>
       </aside>
 
       {/* Main Panel Content */}
       <main className="main-content">
         
-        {/* Campaign Focus & Countdown Banner */}
-        <section className="focus-banner">
-          <div className="candidate-focus">
-            <div className="candidate-badge">#3</div>
-            <div className="candidate-details">
-              <h2>Anil Kumar K G Pillai</h2>
-              <p>Managing Committee Candidate • 7-Candidate Joint Panel</p>
+        {/* Context-Aware Focus Banner */}
+        {isCampaignTab ? (
+          <section className="focus-banner campaign-archive-banner">
+            <div className="candidate-focus">
+              <div className="candidate-badge" style={{ background: 'linear-gradient(135deg, #f59e0b, #d97706)' }}>#3</div>
+              <div className="candidate-details">
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <h2>Anil Kumar K G Pillai</h2>
+                  <span className="campaign-status-tag">Election Completed</span>
+                </div>
+                <p>Managing Committee Candidate • 7-Candidate Joint Panel (Sep 6, 2026 Archive)</p>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
+              <CountdownClock />
+              {renderUserProfile()}
+            </div>
+          </section>
+        ) : (
+          <section className="focus-banner community-focus-banner">
+            <div className="candidate-focus">
+              <div className="community-badge-icon">
+                {activeTab === 'birthdays' && <Cake size={22} color="#ec4899" />}
+                {activeTab === 'bloodbank' && <Droplet size={22} color="#ef4444" />}
+                {activeTab === 'database' && <FileText size={22} color="#3b82f6" />}
+                {activeTab === 'quality' && <AlertTriangle size={22} color="#f59e0b" />}
+                {activeTab === 'templates' && <Settings size={22} color="#a855f7" />}
+              </div>
+              <div className="candidate-details">
+                <h2>
+                  {activeTab === 'birthdays' && "Greeting Service & Celebrations Hub"}
+                  {activeTab === 'bloodbank' && "Emergency Blood Bank & Donor Directory"}
+                  {activeTab === 'database' && "Member Directory & Database Services"}
+                  {activeTab === 'quality' && "Data Integrity & Contact Audit"}
+                  {activeTab === 'templates' && "Message & Communication Templates"}
+                </h2>
+                <p>Indian Association Sharjah • Community Services & Welfare Platform</p>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+              <div 
+                className="quick-stat-pill" 
+                onClick={() => selectTab('birthdays', true)}
+                title="View today's birthday celebrants"
+              >
+                <Cake size={15} color="#ec4899" />
+                <span><strong>{todayBirthdays?.totalToday ?? 0}</strong> Birthdays Today</span>
+              </div>
+
+              <div 
+                className="quick-stat-pill" 
+                onClick={() => selectTab('bloodbank', true)}
+                title="View registered blood donors"
+              >
+                <Droplet size={15} color="#ef4444" />
+                <span><strong>{contacts.filter(c => c.blood_group && c.blood_group !== 'Unknown').length}</strong> Donors</span>
+              </div>
+
+              <div 
+                className="quick-stat-pill" 
+                onClick={() => selectTab('database', true)}
+                title="View directory member records"
+              >
+                <Users size={15} color="#3b82f6" />
+                <span><strong>{contacts.length.toLocaleString()}</strong> Members</span>
+              </div>
+
+              {renderUserProfile()}
+            </div>
+          </section>
+        )}
+
+        {/* Campaign Sub-Navigation Bar: Quick switcher when inside Campaign Center */}
+        {isCampaignTab && (
+          <div className="campaign-subnav-bar">
+            <div className="campaign-subnav-label">
+              <Vote size={14} color="#f59e0b" />
+              <span>Campaign Center</span>
+            </div>
+            <div className="campaign-subnav-pills">
+              <button className={`subnav-pill ${activeTab === 'dashboard' ? 'active' : ''}`} onClick={() => selectTab('dashboard')}>
+                Overview & Turnout
+              </button>
+              <button className={`subnav-pill ${activeTab === 'excelDashboard' ? 'active' : ''}`} onClick={() => selectTab('excelDashboard')}>
+                Detailed Analytics
+              </button>
+              <button className={`subnav-pill ${activeTab === 'exitpoll' ? 'active' : ''}`} onClick={() => { selectTab('exitpoll'); setExitPollSearch(''); }}>
+                Exit Poll
+              </button>
+              <button className={`subnav-pill ${activeTab === 'candidates' ? 'active' : ''}`} onClick={() => selectTab('candidates')}>
+                Panel Candidates
+              </button>
+              <button className={`subnav-pill ${activeTab === 'call' ? 'active' : ''}`} onClick={() => selectTab('call')}>
+                Call Center
+              </button>
+              <button className={`subnav-pill ${activeTab === 'whatsapp' ? 'active' : ''}`} onClick={() => selectTab('whatsapp')}>
+                WhatsApp
+              </button>
+              <button className={`subnav-pill ${activeTab === 'email' ? 'active' : ''}`} onClick={() => selectTab('email')}>
+                Email
+              </button>
+              <button className={`subnav-pill ${activeTab === 'sms' ? 'active' : ''}`} onClick={() => selectTab('sms')}>
+                SMS
+              </button>
+              <button className={`subnav-pill ${activeTab === 'volunteers' ? 'active' : ''}`} onClick={() => selectTab('volunteers')}>
+                Volunteers
+              </button>
             </div>
           </div>
-
-          <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
-            <CountdownClock />
-
-            {/* User Profile Badge & Session Controls */}
-            {currentUser && (
-              <div className="user-profile-badge">
-                <div className="user-avatar" title={currentUser.username}>
-                  {(currentUser.username || 'U')[0].toUpperCase()}
-                </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--color-text-white)' }}>
-                      {currentUser.volunteer_name || currentUser.username}
-                    </span>
-                    <span className={`badge-role ${currentUser.role || 'volunteer'}`}>
-                      {currentUser.role === 'admin' ? <Shield size={10} /> : <UserCheck size={10} />}
-                      {currentUser.role}
-                    </span>
-                  </div>
-                </div>
-
-                {isAdmin && (
-                  <button
-                    className="btn"
-                    onClick={() => { setShowUserManagementModal(true); fetchSystemUsers(); }}
-                    title="Manage System User Accounts"
-                    style={{ padding: '4px 8px', fontSize: 11, display: 'inline-flex', alignItems: 'center', gap: 4, background: 'rgba(168, 85, 247, 0.15)', color: '#c084fc', border: '1px solid rgba(168, 85, 247, 0.3)' }}
-                  >
-                    <Users size={12} /> Users
-                  </button>
-                )}
-
-                {isAdmin && (
-                  <button
-                    className="btn"
-                    onClick={() => setShowBackupModal(true)}
-                    title="Database & Cloud Backups Management"
-                    style={{ padding: '4px 8px', fontSize: 11, display: 'inline-flex', alignItems: 'center', gap: 4, background: 'rgba(59, 130, 246, 0.15)', color: '#60a5fa', border: '1px solid rgba(59, 130, 246, 0.3)' }}
-                  >
-                    <Database size={12} /> Backups
-                  </button>
-                )}
-
-                <button
-                  className="btn"
-                  onClick={() => { setShowChangePasswordModal(true); setChangePasswordMsg({ type: '', text: '' }); }}
-                  title="Change Password"
-                  style={{ padding: '4px 8px', fontSize: 11, display: 'inline-flex', alignItems: 'center', gap: 4 }}
-                >
-                  <Key size={12} /> Password
-                </button>
-
-                <button
-                  className="btn"
-                  onClick={handleLogout}
-                  title="Log Out"
-                  style={{ padding: '4px 8px', fontSize: 11, display: 'inline-flex', alignItems: 'center', gap: 4, background: 'rgba(239, 68, 68, 0.15)', color: '#f87171', border: '1px solid rgba(239, 68, 68, 0.3)' }}
-                >
-                  <LogOut size={12} /> Logout
-                </button>
-              </div>
-            )}
-          </div>
-        </section>
+        )}
 
         {/* Dashboard Canvas */}
         <div className="content-canvas">

@@ -53,6 +53,7 @@ const CAMPAIGN_CANDIDATES = [
 
 // Campaign Emojis for quick insertion
 const CAMPAIGN_EMOJIS = ['🟢', '🗳️', '🙏', '🤝', '👤', '✨', '📢', '✅', '⭐', '🇮🇳', '⚖️', '🟡', '🔴', '📱', '✌️', '🎉'];
+const CELEBRATION_EMOJIS = ['🎂', '🎉', '💐', '✨', '🌟', '🙏', '❤️', '👏', '🎊', '🎈', '🍰', '🎁'];
 
 // Default message templates with preserved Unicode emojis
 const DEFAULT_TEMPLATES = {
@@ -61,7 +62,8 @@ const DEFAULT_TEMPLATES = {
   callScript: "Hello {Name}, calling from the election committee. We request your support for Managing Committee candidate Anil Kumar K G Pillai (Serial No. 3) and our 7-candidate panel in the selection on September 6th at 8:00 AM. May we count on your support?",
   sms: "Dear {Name}, please support Anil Kumar K G Pillai (Serial No. 3) & our 7-candidate panel for Managing Committee Selection on Sep 6th. Your vote is vital. Thank you!",
   birthday: "Dear {Name},\n\nOn behalf of Indian Association Sharjah, we wish you a very Happy Birthday! 🎂✨ May this year bring you boundless happiness, enduring vitality, and great success in all your endeavors.\n\nWarm regards,\nIndian Association Sharjah",
-  bloodRequest: "🚨 URGENT BLOOD DONATION REQUEST\n\nDear {Name},\n\nAn urgent blood donation (Blood Group: {BloodGroup}) is required for a patient in emergency care.\n\n🏥 Hospital: {Hospital}\n👤 Patient: {Patient}\n🩸 Blood Group: {BloodGroup}\n\nIf you or someone you know can donate, please contact immediately. Your timely support can save a life! 🙏"
+  bloodRequest: "🚨 URGENT BLOOD DONATION REQUEST\n\nDear {Name},\n\nAn urgent blood donation (Blood Group: {BloodGroup}) is required for a patient in emergency care.\n\n🏥 Hospital: {Hospital}\n👤 Patient: {Patient}\n🩸 Blood Group: {BloodGroup}\n\nIf you or someone you know can donate, please contact immediately. Your timely support can save a life! 🙏",
+  communityNotice: "Dear {Name},\n\nGreetings from Indian Association Sharjah (IAS).\n\nWe would like to inform all members about our upcoming community initiatives, welfare services, and community gatherings. Your active participation and support make our community stronger.\n\nWarm regards,\nIndian Association Sharjah"
 };
 
 // Performance: Isolated CountdownClock component preventing 1-second interval re-renders in root App
@@ -174,10 +176,11 @@ export default function App() {
 
   const CAMPAIGN_TABS = useMemo(() => [
     'dashboard', 'excelDashboard', 'exitpoll', 'candidates',
-    'database', 'call', 'whatsapp', 'email', 'sms', 'volunteers'
+    'database', 'call', 'whatsapp', 'email', 'sms', 'volunteers',
+    'campaignTemplates', 'templates'
   ], []);
   const isCampaignTab = CAMPAIGN_TABS.includes(activeTab);
-  const isCommunityView = ['communityDirectory', 'birthdays', 'bloodbank'].includes(activeTab);
+  const isCommunityView = ['communityDirectory', 'birthdays', 'bloodbank', 'communityTemplates'].includes(activeTab);
   
   // Searching & Pagination
   const [searchQuery, setSearchQuery] = useState('');
@@ -2868,6 +2871,17 @@ export default function App() {
               </button>
             </li>
 
+            <li className="nav-item">
+              <button 
+                className={`nav-link ${activeTab === 'communityTemplates' ? 'active' : ''}`} 
+                onClick={() => selectTab('communityTemplates', true)}
+                title="Community Message Templates & Greeting Formats"
+              >
+                <Settings size={18} color="#a855f7" />
+                <span>Message Templates</span>
+              </button>
+            </li>
+
             {/* Consolidated Election Campaign Center */}
             <li className="nav-section-label" style={{ marginTop: 14 }}>Election Campaign</li>
 
@@ -2952,6 +2966,12 @@ export default function App() {
                       <span>Volunteers Roster</span>
                     </button>
                   </li>
+                  <li className="nav-sub-item">
+                    <button className={`nav-sub-link ${activeTab === 'campaignTemplates' || activeTab === 'templates' ? 'active' : ''}`} onClick={() => selectTab('campaignTemplates', true)}>
+                      <Settings size={14} />
+                      <span>Outreach Scripts & Templates</span>
+                    </button>
+                  </li>
                 </ul>
               )}
             </li>
@@ -2963,13 +2983,6 @@ export default function App() {
               <button className={`nav-link ${activeTab === 'quality' ? 'active' : ''}`} onClick={() => selectTab('quality', true)}>
                 <AlertTriangle size={18} />
                 <span>Data Integrity</span>
-              </button>
-            </li>
-
-            <li className="nav-item">
-              <button className={`nav-link ${activeTab === 'templates' ? 'active' : ''}`} onClick={() => selectTab('templates', true)}>
-                <Settings size={18} />
-                <span>Message Templates</span>
               </button>
             </li>
           </ul>
@@ -3024,7 +3037,7 @@ export default function App() {
                 {activeTab === 'bloodbank' && <Droplet size={22} color="#ef4444" />}
                 {activeTab === 'communityDirectory' && <FileText size={22} color="#3b82f6" />}
                 {activeTab === 'quality' && <AlertTriangle size={22} color="#f59e0b" />}
-                {activeTab === 'templates' && <Settings size={22} color="#a855f7" />}
+                {activeTab === 'communityTemplates' && <Settings size={22} color="#a855f7" />}
               </div>
               <div className="candidate-details">
                 <h2>
@@ -3032,7 +3045,7 @@ export default function App() {
                   {activeTab === 'bloodbank' && "Emergency Blood Bank & Donor Directory"}
                   {activeTab === 'communityDirectory' && "Member Directory & Profile Management"}
                   {activeTab === 'quality' && "Data Integrity & Contact Audit"}
-                  {activeTab === 'templates' && "Message & Communication Templates"}
+                  {activeTab === 'communityTemplates' && "Community Message & Greeting Templates"}
                 </h2>
                 <p>Indian Association Sharjah • Community Services & Welfare Platform</p>
               </div>
@@ -3108,6 +3121,9 @@ export default function App() {
               </button>
               <button className={`subnav-pill ${activeTab === 'volunteers' ? 'active' : ''}`} onClick={() => selectTab('volunteers')}>
                 Volunteers
+              </button>
+              <button className={`subnav-pill ${(activeTab === 'campaignTemplates' || activeTab === 'templates') ? 'active' : ''}`} onClick={() => selectTab('campaignTemplates')}>
+                Outreach Scripts
               </button>
             </div>
           </div>
@@ -5926,10 +5942,184 @@ export default function App() {
             />
           )}
 
-          {/* ==================== TEMPLATES TAB ==================== */}
-          {activeTab === 'templates' && (
+          {/* ==================== COMMUNITY MESSAGE TEMPLATES TAB ==================== */}
+          {activeTab === 'communityTemplates' && (
             <div>
-              <h2 className="tab-title">Outreach Script & Message Templates</h2>
+              <h2 className="tab-title">Community Message & Greeting Templates</h2>
+              
+              <div className="template-grid">
+                {/* Birthday Email Template Card */}
+                <div className="template-card">
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                    <h3 className="panel-title" style={{ color: '#ec4899', margin: 0 }}>
+                      <Cake size={18} /> Birthday Felicitation Greeting Template
+                    </h3>
+                    <span style={{ fontSize: 11, background: 'rgba(236, 72, 153, 0.15)', color: '#f472b6', padding: '2px 8px', borderRadius: 10, fontWeight: 600 }}>
+                      Daily 08:00 AM Cron • Greeting Service
+                    </span>
+                  </div>
+                  <div className="template-variables" style={{ marginBottom: 8 }}>
+                    <span style={{ fontSize: 12, color: 'var(--color-text-muted)', alignSelf: 'center' }}>Insert Tag:</span>
+                    <button type="button" className="var-tag-btn" onClick={() => setTemplates(p => ({ ...p, birthday: (p.birthday || '') + ' {Name}' }))}>+ &#123;Name&#125;</button>
+                    <button type="button" className="var-tag-btn" onClick={() => setTemplates(p => ({ ...p, birthday: (p.birthday || '') + ' {AccCode}' }))}>+ &#123;AccCode&#125;</button>
+                    <button type="button" className="var-tag-btn" onClick={() => setTemplates(p => ({ ...p, birthday: (p.birthday || '') + ' {DateOfBirth}' }))}>+ &#123;DateOfBirth&#125;</button>
+                  </div>
+                  {/* Celebrations Emoji Quick-Bar */}
+                  <div className="emoji-bar" style={{ marginBottom: 8 }}>
+                    <span style={{ fontSize: 11, color: 'var(--color-text-muted)', marginRight: 4 }}>Celebration Emojis:</span>
+                    {CELEBRATION_EMOJIS.map(emoji => (
+                      <button
+                        key={emoji}
+                        type="button"
+                        className="emoji-chip"
+                        title={`Insert ${emoji}`}
+                        onClick={() => setTemplates(p => ({ ...p, birthday: (p.birthday || '') + ' ' + emoji }))}
+                      >
+                        {emoji}
+                      </button>
+                    ))}
+                  </div>
+                  <div style={{ fontSize: 11, color: 'var(--color-text-secondary)', marginBottom: 8, lineHeight: 1.4 }}>
+                    Automated service runs every morning at 08:00 AM GST. Members celebrating their birthday receive an IAS felicitation greeting via automated email or personal message.
+                  </div>
+                  <textarea 
+                    className="drawer-textarea" 
+                    value={templates.birthday || ''} 
+                    onChange={(e) => setTemplates(p => ({ ...p, birthday: e.target.value }))}
+                    style={{ height: 160 }}
+                    placeholder="Enter birthday message template..."
+                  />
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 8 }}>
+                    <button 
+                      type="button" 
+                      className="btn" 
+                      onClick={() => {
+                        navigator.clipboard.writeText(templates.birthday || '');
+                        alert('Birthday greeting template copied to clipboard!');
+                      }}
+                    >
+                      <Copy size={14} /> Copy Template
+                    </button>
+                    <button 
+                      type="button" 
+                      className="btn primary" 
+                      onClick={() => {
+                        localStorage.setItem('campaign_templates', JSON.stringify(templates));
+                        alert('Birthday greeting template saved!');
+                      }}
+                    >
+                      <Save size={14} /> Save Template
+                    </button>
+                  </div>
+                </div>
+
+                {/* Emergency Blood Request Template Card */}
+                <div className="template-card">
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                    <h3 className="panel-title" style={{ color: '#ef4444', margin: 0 }}>
+                      <Heart size={18} /> Emergency Blood Donation Request Template
+                    </h3>
+                    <span style={{ fontSize: 11, background: 'rgba(239, 68, 68, 0.15)', color: '#f87171', padding: '2px 8px', borderRadius: 10, fontWeight: 600 }}>
+                      Urgent Outreach • Blood Bank
+                    </span>
+                  </div>
+                  <div className="template-variables" style={{ marginBottom: 8 }}>
+                    <span style={{ fontSize: 12, color: 'var(--color-text-muted)', alignSelf: 'center' }}>Insert Tag:</span>
+                    <button type="button" className="var-tag-btn" onClick={() => setTemplates(p => ({ ...p, bloodRequest: (p.bloodRequest || '') + ' {Name}' }))}>+ &#123;Name&#125;</button>
+                    <button type="button" className="var-tag-btn" onClick={() => setTemplates(p => ({ ...p, bloodRequest: (p.bloodRequest || '') + ' {BloodGroup}' }))}>+ &#123;BloodGroup&#125;</button>
+                    <button type="button" className="var-tag-btn" onClick={() => setTemplates(p => ({ ...p, bloodRequest: (p.bloodRequest || '') + ' {Hospital}' }))}>+ &#123;Hospital&#125;</button>
+                    <button type="button" className="var-tag-btn" onClick={() => setTemplates(p => ({ ...p, bloodRequest: (p.bloodRequest || '') + ' {Patient}' }))}>+ &#123;Patient&#125;</button>
+                  </div>
+                  <div style={{ fontSize: 11, color: 'var(--color-text-secondary)', marginBottom: 8, lineHeight: 1.4 }}>
+                    Broadcasted to matching registered donors via WhatsApp and SMS during life-saving emergency situations.
+                  </div>
+                  <textarea 
+                    className="drawer-textarea" 
+                    value={templates.bloodRequest || ''} 
+                    onChange={(e) => setTemplates(p => ({ ...p, bloodRequest: e.target.value }))}
+                    style={{ height: 160 }}
+                    placeholder="Enter urgent blood request template..."
+                  />
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 8 }}>
+                    <button 
+                      type="button" 
+                      className="btn" 
+                      onClick={() => {
+                        navigator.clipboard.writeText(templates.bloodRequest || '');
+                        alert('Emergency blood request template copied to clipboard!');
+                      }}
+                    >
+                      <Copy size={14} /> Copy Template
+                    </button>
+                    <button 
+                      type="button" 
+                      className="btn primary" 
+                      onClick={() => {
+                        localStorage.setItem('campaign_templates', JSON.stringify(templates));
+                        alert('Emergency blood request template saved!');
+                      }}
+                    >
+                      <Save size={14} /> Save Template
+                    </button>
+                  </div>
+                </div>
+
+                {/* General Community Announcement Template Card */}
+                <div className="template-card" style={{ gridColumn: 'span 2' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                    <h3 className="panel-title" style={{ color: '#3b82f6', margin: 0 }}>
+                      <MessageSquare size={18} /> General Member Announcement & Notice Template
+                    </h3>
+                    <span style={{ fontSize: 11, background: 'rgba(59, 130, 246, 0.15)', color: '#60a5fa', padding: '2px 8px', borderRadius: 10, fontWeight: 600 }}>
+                      Member Welfare & Community Notices
+                    </span>
+                  </div>
+                  <div className="template-variables" style={{ marginBottom: 8 }}>
+                    <span style={{ fontSize: 12, color: 'var(--color-text-muted)', alignSelf: 'center' }}>Insert Tag:</span>
+                    <button type="button" className="var-tag-btn" onClick={() => setTemplates(p => ({ ...p, communityNotice: (p.communityNotice || DEFAULT_TEMPLATES.communityNotice) + ' {Name}' }))}>+ &#123;Name&#125;</button>
+                    <button type="button" className="var-tag-btn" onClick={() => setTemplates(p => ({ ...p, communityNotice: (p.communityNotice || DEFAULT_TEMPLATES.communityNotice) + ' {AccCode}' }))}>+ &#123;AccCode&#125;</button>
+                  </div>
+                  <div style={{ fontSize: 11, color: 'var(--color-text-secondary)', marginBottom: 8, lineHeight: 1.4 }}>
+                    Standard template format for official IAS notices, welfare announcements, community gatherings, and member advisories.
+                  </div>
+                  <textarea 
+                    className="drawer-textarea" 
+                    value={templates.communityNotice || DEFAULT_TEMPLATES.communityNotice} 
+                    onChange={(e) => setTemplates(p => ({ ...p, communityNotice: e.target.value }))}
+                    style={{ height: 140 }}
+                    placeholder="Enter community announcement template..."
+                  />
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 8 }}>
+                    <button 
+                      type="button" 
+                      className="btn" 
+                      onClick={() => {
+                        navigator.clipboard.writeText(templates.communityNotice || DEFAULT_TEMPLATES.communityNotice);
+                        alert('Community announcement template copied to clipboard!');
+                      }}
+                    >
+                      <Copy size={14} /> Copy Template
+                    </button>
+                    <button 
+                      type="button" 
+                      className="btn primary" 
+                      onClick={() => {
+                        localStorage.setItem('campaign_templates', JSON.stringify(templates));
+                        alert('Community announcement template saved!');
+                      }}
+                    >
+                      <Save size={14} /> Save Template
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ==================== CAMPAIGN OUTREACH SCRIPTS & TEMPLATES TAB ==================== */}
+          {(activeTab === 'campaignTemplates' || activeTab === 'templates') && (
+            <div>
+              <h2 className="tab-title">Campaign Outreach Scripts & Message Templates</h2>
               
               <div className="template-grid">
                 {/* WhatsApp template card */}
@@ -6248,107 +6438,6 @@ export default function App() {
                         <Save size={14} /> Save Template
                       </button>
                     </div>
-                  </div>
-                </div>
-
-                {/* Birthday Email Template Card */}
-                <div className="template-card">
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                    <h3 className="panel-title" style={{ color: '#ec4899', margin: 0 }}>
-                      <Cake size={18} /> Birthday Felicitation Email Template
-                    </h3>
-                    <span style={{ fontSize: 11, background: 'rgba(236, 72, 153, 0.15)', color: '#f472b6', padding: '2px 8px', borderRadius: 10, fontWeight: 600 }}>
-                      Daily 08:00 AM Cron
-                    </span>
-                  </div>
-                  <div className="template-variables" style={{ marginBottom: 8 }}>
-                    <span style={{ fontSize: 12, color: 'var(--color-text-muted)', alignSelf: 'center' }}>Insert Tag:</span>
-                    <button type="button" className="var-tag-btn" onClick={() => setTemplates(p => ({ ...p, birthday: (p.birthday || '') + ' {Name}' }))}>+ &#123;Name&#125;</button>
-                    <button type="button" className="var-tag-btn" onClick={() => setTemplates(p => ({ ...p, birthday: (p.birthday || '') + ' {AccCode}' }))}>+ &#123;AccCode&#125;</button>
-                    <button type="button" className="var-tag-btn" onClick={() => setTemplates(p => ({ ...p, birthday: (p.birthday || '') + ' {DateOfBirth}' }))}>+ &#123;DateOfBirth&#125;</button>
-                  </div>
-                  <div style={{ fontSize: 11, color: 'var(--color-text-secondary)', marginBottom: 8, lineHeight: 1.4 }}>
-                    Automated service runs every morning at 08:00 AM. Members celebrating their birthday receive an IAS felicitation greeting.
-                  </div>
-                  <textarea 
-                    className="drawer-textarea" 
-                    value={templates.birthday || ''} 
-                    onChange={(e) => setTemplates(p => ({ ...p, birthday: e.target.value }))}
-                    style={{ height: 160 }}
-                    placeholder="Enter birthday message template..."
-                  />
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 8 }}>
-                    <button 
-                      type="button" 
-                      className="btn" 
-                      onClick={() => {
-                        navigator.clipboard.writeText(templates.birthday || '');
-                        alert('Birthday email template copied to clipboard!');
-                      }}
-                    >
-                      <Copy size={14} /> Copy Template
-                    </button>
-                    <button 
-                      type="button" 
-                      className="btn primary" 
-                      onClick={() => {
-                        localStorage.setItem('campaign_templates', JSON.stringify(templates));
-                        alert('Birthday email template saved!');
-                      }}
-                    >
-                      <Save size={14} /> Save Template
-                    </button>
-                  </div>
-                </div>
-
-                {/* Emergency Blood Request Template Card */}
-                <div className="template-card">
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                    <h3 className="panel-title" style={{ color: '#ef4444', margin: 0 }}>
-                      <Heart size={18} /> Emergency Blood Donation Request Template
-                    </h3>
-                    <span style={{ fontSize: 11, background: 'rgba(239, 68, 68, 0.15)', color: '#f87171', padding: '2px 8px', borderRadius: 10, fontWeight: 600 }}>
-                      Urgent Outreach
-                    </span>
-                  </div>
-                  <div className="template-variables" style={{ marginBottom: 8 }}>
-                    <span style={{ fontSize: 12, color: 'var(--color-text-muted)', alignSelf: 'center' }}>Insert Tag:</span>
-                    <button type="button" className="var-tag-btn" onClick={() => setTemplates(p => ({ ...p, bloodRequest: (p.bloodRequest || '') + ' {Name}' }))}>+ &#123;Name&#125;</button>
-                    <button type="button" className="var-tag-btn" onClick={() => setTemplates(p => ({ ...p, bloodRequest: (p.bloodRequest || '') + ' {BloodGroup}' }))}>+ &#123;BloodGroup&#125;</button>
-                    <button type="button" className="var-tag-btn" onClick={() => setTemplates(p => ({ ...p, bloodRequest: (p.bloodRequest || '') + ' {Hospital}' }))}>+ &#123;Hospital&#125;</button>
-                    <button type="button" className="var-tag-btn" onClick={() => setTemplates(p => ({ ...p, bloodRequest: (p.bloodRequest || '') + ' {Patient}' }))}>+ &#123;Patient&#125;</button>
-                  </div>
-                  <div style={{ fontSize: 11, color: 'var(--color-text-secondary)', marginBottom: 8, lineHeight: 1.4 }}>
-                    Broadcasted to matching registered donors via WhatsApp and SMS during life-saving emergency situations.
-                  </div>
-                  <textarea 
-                    className="drawer-textarea" 
-                    value={templates.bloodRequest || ''} 
-                    onChange={(e) => setTemplates(p => ({ ...p, bloodRequest: e.target.value }))}
-                    style={{ height: 160 }}
-                    placeholder="Enter urgent blood request template..."
-                  />
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 8 }}>
-                    <button 
-                      type="button" 
-                      className="btn" 
-                      onClick={() => {
-                        navigator.clipboard.writeText(templates.bloodRequest || '');
-                        alert('Emergency blood request template copied to clipboard!');
-                      }}
-                    >
-                      <Copy size={14} /> Copy Template
-                    </button>
-                    <button 
-                      type="button" 
-                      className="btn primary" 
-                      onClick={() => {
-                        localStorage.setItem('campaign_templates', JSON.stringify(templates));
-                        alert('Emergency blood request template saved!');
-                      }}
-                    >
-                      <Save size={14} /> Save Template
-                    </button>
                   </div>
                 </div>
               </div>

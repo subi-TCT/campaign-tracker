@@ -2,12 +2,15 @@ const fs = require('fs');
 const path = require('path');
 const zlib = require('zlib');
 const xlsx = require('xlsx');
+const sqlite3 = require('sqlite3').verbose();
+const bcrypt = require('bcryptjs');
 
 class BackupService {
   constructor(options = {}) {
     this.options = options;
     this.getDb = typeof options.getDb === 'function' ? options.getDb : () => options.db;
     this.query = options.query;
+    this.run = options.run;
     this.getIsPostgres = typeof options.getIsPostgres === 'function' ? options.getIsPostgres : () => !!options.isPostgres;
     this.dbPath = options.dbPath || path.join(__dirname, 'database.sqlite');
     this.backupsDir = options.backupsDir || path.join(__dirname, 'backups');
@@ -449,6 +452,409 @@ class BackupService {
       },
       schedule: process.env.BACKUP_SCHEDULE_CRON || '0 23 * * * (Daily at 23:00 GST)'
     };
+  }
+
+  // 8. Parse Backup Content (Supports .sqlite.gz, .json.gz, .xlsx)
+  async parseBackupContent(fileBuffer, filenameHint = '') {
+    let buffer = fileBuffer;
+    // Decompress if gzip header (0x1F, 0x8B)
+    if (buffer.length > 2 && buffer[0] === 0x1f && buffer[1] === 0x8b) {
+      buffer = zlib.gunzipSync(buffer);
+    }
+
+    // A. Check if raw SQLite binary file
+    if (buffer.length >= 16 && buffer.slice(0, 15).toString() === 'SQLite format 3') {
+      const tempDbPath = path.join(this.backupsDir, `temp_restore_${Date.now()}_${Math.random().toString(36).substring(7)}.sqlite`);
+      fs.writeFileSync(tempDbPath, buffer);
+      try {
+        const tempDb = new sqlite3.Database(tempDbPath);
+        const contacts = await new Promise((resolve, reject) => {
+          tempDb.all('SELECT * FROM contacts ORDER BY id ASC', (err, rows) => {
+            if (err) reject(err);
+            else resolve(rows || []);
+          });
+        });
+        let users = [];
+        try {
+          users = await new Promise((resolve) => {
+            tempDb.all('SELECT id, username, volunteer_name, role, created_at FROM users ORDER BY id ASC', (err, rows) => {
+              if (err) resolve([]);
+              else resolve(rows || []);
+            });
+          });
+        } catch (e) {}
+        tempDb.close();
+        if (fs.existsSync(tempDbPath)) fs.unlinkSync(tempDbPath);
+        return { type: 'sqlite', contacts, users };
+      } catch (err) {
+        if (fs.existsSync(tempDbPath)) fs.unlinkSync(tempDbPath);
+        throw err;
+      }
+    }
+
+    // B. Check if JSON dump ({ exportDate, tables: { contacts, users } })
+    try {
+      const text = buffer.toString('utf8').trim();
+      if (text.startsWith('{') && text.endsWith('}')) {
+        const data = JSON.parse(text);
+        if (data.tables && Array.isArray(data.tables.contacts)) {
+          return {
+            type: 'json',
+            exportDate: data.exportDate,
+            contacts: data.tables.contacts,
+            users: data.tables.users || []
+          };
+        }
+      }
+    } catch (e) {
+      // Not JSON, continue to Excel check
+    }
+
+    // C. Check if Excel workbook (.xlsx)
+    try {
+      const wb = xlsx.read(buffer, { type: 'buffer' });
+      if (wb && wb.SheetNames && wb.SheetNames.length > 0) {
+        const targetSheetName = wb.Sheets['Voters & Contacts'] ? 'Voters & Contacts' : wb.SheetNames[0];
+        const sheet = wb.Sheets[targetSheetName];
+        if (sheet) {
+          const rows = xlsx.utils.sheet_to_json(sheet);
+          const contacts = rows.map(r => ({
+            s_no: r['S.No'] || r['s_no'] || 0,
+            acc_code: String(r['IAS ID / Code'] || r['acc_code'] || r['IAS ID'] || '').trim(),
+            account_name: String(r['Member Name'] || r['account_name'] || '').trim(),
+            mobile_number: String(r['Mobile (UAE)'] || r['mobile_number'] || '').trim(),
+            email_id: String(r['Email'] || r['email_id'] || '').trim(),
+            emirate: String(r['Emirate'] || r['emirate'] || '').trim(),
+            district: String(r['District'] || r['district'] || '').trim(),
+            area: String(r['Area / Location'] || r['area'] || '').trim(),
+            blood_group: String(r['Blood Group'] || r['blood_group'] || '').trim(),
+            date_of_birth: String(r['Date of Birth'] || r['date_of_birth'] || '').trim(),
+            date_of_join: String(r['Date of Join'] || r['date_of_join'] || '').trim(),
+            account_status: String(r['Account Status'] || r['account_status'] || 'Active').trim(),
+            assigned_to: String(r['Assigned Volunteer'] || r['assigned_to'] || 'Unassigned').trim(),
+            call_status: String(r['Call Status'] || r['call_status'] || 'Not Called').trim(),
+            call_sent_date: String(r['Last Called Date'] || r['call_sent_date'] || '').trim(),
+            member_reaction: String(r['Voter Reaction'] || r['member_reaction'] || 'Unknown').trim(),
+            exit_poll_status: String(r['Exit Poll Status'] || r['exit_poll_status'] || 'Pending').trim(),
+            notes: String(r['Notes'] || r['notes'] || '').trim(),
+            whatsapp_status: String(r['WhatsApp Status'] || r['whatsapp_status'] || 'Pending').trim(),
+            sms_status: String(r['SMS Status'] || r['sms_status'] || 'Pending').trim(),
+            email_status: String(r['Email Status'] || r['email_status'] || 'Pending').trim(),
+            photo_filename: String(r['Photo Filename'] || r['photo_filename'] || '').trim(),
+            birthday_sent_year: Number(r['Birthday Sent Year'] || r['birthday_sent_year']) || 0
+          }));
+
+          let users = [];
+          if (wb.Sheets['Campaign Volunteers']) {
+            const uRows = xlsx.utils.sheet_to_json(wb.Sheets['Campaign Volunteers']);
+            users = uRows.map(u => ({
+              username: String(u['Username'] || u['username'] || '').trim(),
+              volunteer_name: String(u['Volunteer Name'] || u['volunteer_name'] || '').trim(),
+              role: String(u['Role'] || u['role'] || 'volunteer').trim()
+            })).filter(u => u.username);
+          }
+
+          return { type: 'excel', contacts, users };
+        }
+      }
+    } catch (e) {
+      // Not Excel
+    }
+
+    throw new Error('Unrecognized backup format. Please provide a valid .sqlite.gz, .json.gz, or .xlsx backup archive.');
+  }
+
+  // 9. Execute Full Database Restoration
+  async restoreFromBuffer(fileBuffer, filenameHint = 'backup_archive', options = {}) {
+    const { mode = 'replace' } = options; // 'replace' | 'merge'
+    const startTime = Date.now();
+    console.log(`[RESTORE] Starting restoration (${mode} mode) for ${filenameHint}...`);
+
+    // 1. Parse backup contents
+    const parsed = await this.parseBackupContent(fileBuffer, filenameHint);
+    if (!parsed.contacts || !Array.isArray(parsed.contacts) || parsed.contacts.length === 0) {
+      throw new Error('Backup archive does not contain any valid member contact records.');
+    }
+
+    // 2. Automated Safety Snapshot: Take complete backup of current live state first
+    console.log('[RESTORE] Creating mandatory pre-restore safety snapshot...');
+    const safetySnapshot = await this.executeFullBackupCycle();
+    const safetyFilename = safetySnapshot.sqliteFile?.filename || safetySnapshot.excelFile?.filename || 'pre_restore_backup';
+    console.log(`[RESTORE] Pre-restore safety snapshot created: ${safetyFilename}`);
+
+    // 3. Apply Contacts Data inside Transaction
+    const isPg = this.getIsPostgres();
+    const beginSql = isPg ? 'BEGIN' : 'BEGIN TRANSACTION';
+    const commitSql = isPg ? 'COMMIT' : 'COMMIT';
+    const rollbackSql = isPg ? 'ROLLBACK' : 'ROLLBACK';
+
+    if (isPg) {
+      await this.query(beginSql);
+    } else {
+      await this.run(beginSql);
+    }
+
+    let insertedCount = 0;
+    let updatedCount = 0;
+
+    try {
+      if (mode === 'replace') {
+        if (isPg) {
+          await this.query('DELETE FROM contacts');
+        } else {
+          await this.run('DELETE FROM contacts');
+        }
+
+        const insertSql = `
+          INSERT INTO contacts (
+            s_no, acc_code, account_name, mobile_number, email_id,
+            email_status, email_sent_date,
+            whatsapp_status, whatsapp_sent_date,
+            call_status, call_sent_date, notes,
+            member_reaction, exit_poll_status,
+            emirate, district, assigned_to,
+            account_status, area, sms_status,
+            sms_sent_date, date_of_birth, date_of_join,
+            blood_group, photo_filename, birthday_sent_year
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `;
+
+        for (const c of parsed.contacts) {
+          const params = [
+            Number(c.s_no) || 0,
+            c.acc_code || '',
+            c.account_name || '',
+            c.mobile_number || '',
+            c.email_id || '',
+            c.email_status || 'Pending',
+            c.email_sent_date || '',
+            c.whatsapp_status || 'Pending',
+            c.whatsapp_sent_date || '',
+            c.call_status || 'Not Called',
+            c.call_sent_date || '',
+            c.notes || '',
+            c.member_reaction || 'Unknown',
+            c.exit_poll_status || 'Pending',
+            c.emirate || '',
+            c.district || '',
+            c.assigned_to || 'Unassigned',
+            c.account_status || 'Active',
+            c.area || '',
+            c.sms_status || 'Pending',
+            c.sms_sent_date || '',
+            c.date_of_birth || '',
+            c.date_of_join || '',
+            c.blood_group || '',
+            c.photo_filename || '',
+            Number(c.birthday_sent_year) || 0
+          ];
+
+          if (isPg) {
+            await this.query(insertSql, params);
+          } else {
+            await this.run(insertSql, params);
+          }
+          insertedCount++;
+        }
+      } else {
+        // 'merge' mode: Upsert contacts by acc_code
+        const existingRows = await this.query('SELECT id, acc_code FROM contacts');
+        const existingMap = new Map();
+        for (const row of existingRows) {
+          if (row.acc_code) {
+            existingMap.set(String(row.acc_code).trim().toUpperCase(), row.id);
+          }
+        }
+
+        const updateSql = `
+          UPDATE contacts SET
+            s_no = ?, account_name = ?, mobile_number = ?, email_id = ?,
+            email_status = ?, email_sent_date = ?,
+            whatsapp_status = ?, whatsapp_sent_date = ?,
+            call_status = ?, call_sent_date = ?, notes = ?,
+            member_reaction = ?, exit_poll_status = ?,
+            emirate = ?, district = ?, assigned_to = ?,
+            account_status = ?, area = ?, sms_status = ?,
+            sms_sent_date = ?, date_of_birth = ?, date_of_join = ?,
+            blood_group = ?, photo_filename = ?, birthday_sent_year = ?
+          WHERE id = ?
+        `;
+
+        const insertSql = `
+          INSERT INTO contacts (
+            s_no, acc_code, account_name, mobile_number, email_id,
+            email_status, email_sent_date,
+            whatsapp_status, whatsapp_sent_date,
+            call_status, call_sent_date, notes,
+            member_reaction, exit_poll_status,
+            emirate, district, assigned_to,
+            account_status, area, sms_status,
+            sms_sent_date, date_of_birth, date_of_join,
+            blood_group, photo_filename, birthday_sent_year
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `;
+
+        for (const c of parsed.contacts) {
+          const codeKey = String(c.acc_code || '').trim().toUpperCase();
+          if (codeKey && existingMap.has(codeKey)) {
+            const existingId = existingMap.get(codeKey);
+            const updateParams = [
+              Number(c.s_no) || 0,
+              c.account_name || '',
+              c.mobile_number || '',
+              c.email_id || '',
+              c.email_status || 'Pending',
+              c.email_sent_date || '',
+              c.whatsapp_status || 'Pending',
+              c.whatsapp_sent_date || '',
+              c.call_status || 'Not Called',
+              c.call_sent_date || '',
+              c.notes || '',
+              c.member_reaction || 'Unknown',
+              c.exit_poll_status || 'Pending',
+              c.emirate || '',
+              c.district || '',
+              c.assigned_to || 'Unassigned',
+              c.account_status || 'Active',
+              c.area || '',
+              c.sms_status || 'Pending',
+              c.sms_sent_date || '',
+              c.date_of_birth || '',
+              c.date_of_join || '',
+              c.blood_group || '',
+              c.photo_filename || '',
+              Number(c.birthday_sent_year) || 0,
+              existingId
+            ];
+            if (isPg) {
+              await this.query(updateSql, updateParams);
+            } else {
+              await this.run(updateSql, updateParams);
+            }
+            updatedCount++;
+          } else {
+            const insertParams = [
+              Number(c.s_no) || 0,
+              c.acc_code || '',
+              c.account_name || '',
+              c.mobile_number || '',
+              c.email_id || '',
+              c.email_status || 'Pending',
+              c.email_sent_date || '',
+              c.whatsapp_status || 'Pending',
+              c.whatsapp_sent_date || '',
+              c.call_status || 'Not Called',
+              c.call_sent_date || '',
+              c.notes || '',
+              c.member_reaction || 'Unknown',
+              c.exit_poll_status || 'Pending',
+              c.emirate || '',
+              c.district || '',
+              c.assigned_to || 'Unassigned',
+              c.account_status || 'Active',
+              c.area || '',
+              c.sms_status || 'Pending',
+              c.sms_sent_date || '',
+              c.date_of_birth || '',
+              c.date_of_join || '',
+              c.blood_group || '',
+              c.photo_filename || '',
+              Number(c.birthday_sent_year) || 0
+            ];
+            if (isPg) {
+              await this.query(insertSql, insertParams);
+            } else {
+              await this.run(insertSql, insertParams);
+            }
+            insertedCount++;
+          }
+        }
+      }
+
+      // Re-seed volunteers from assigned_to column
+      try {
+        if (isPg) {
+          await this.query(`
+            INSERT INTO volunteers (name)
+            SELECT DISTINCT assigned_to FROM contacts
+            WHERE assigned_to IS NOT NULL AND assigned_to != '' AND assigned_to != 'Unassigned'
+            ON CONFLICT (name) DO NOTHING
+          `);
+        } else {
+          await this.run(`
+            INSERT OR IGNORE INTO volunteers (name)
+            SELECT DISTINCT assigned_to FROM contacts
+            WHERE assigned_to IS NOT NULL AND assigned_to != '' AND assigned_to != 'Unassigned'
+          `);
+        }
+      } catch (volErr) {
+        console.warn('[RESTORE] Volunteer sync note:', volErr.message);
+      }
+
+      // Commit transaction
+      if (isPg) {
+        await this.query(commitSql);
+      } else {
+        await this.run(commitSql);
+      }
+    } catch (dbErr) {
+      try {
+        if (isPg) await this.query(rollbackSql);
+        else await this.run(rollbackSql);
+      } catch (rbErr) {}
+      throw dbErr;
+    }
+
+    // 4. Reconcile Users (keep active admin safe)
+    if (parsed.users && Array.isArray(parsed.users) && parsed.users.length > 0) {
+      for (const u of parsed.users) {
+        if (!u.username) continue;
+        try {
+          const userRows = await this.query('SELECT id FROM users WHERE username = ?', [u.username]);
+          if (!userRows || userRows.length === 0) {
+            const salt = await bcrypt.genSalt(10);
+            const defaultHash = await bcrypt.hash('welcome123', salt);
+            const userInsertSql = 'INSERT INTO users (username, password_hash, role, volunteer_name) VALUES (?, ?, ?, ?)';
+            const userParams = [u.username, defaultHash, u.role || 'volunteer', u.volunteer_name || ''];
+            if (isPg) {
+              await this.query(userInsertSql, userParams);
+            } else {
+              await this.run(userInsertSql, userParams);
+            }
+          }
+        } catch (uErr) {
+          console.warn(`[RESTORE] User reconcile note for ${u.username}:`, uErr.message);
+        }
+      }
+    }
+
+    const durationMs = Date.now() - startTime;
+    console.log(`[RESTORE] Finished restoration in ${durationMs}ms: inserted ${insertedCount}, updated ${updatedCount}.`);
+
+    return {
+      success: true,
+      sourceType: parsed.type,
+      mode,
+      totalContactsInBackup: parsed.contacts.length,
+      insertedCount,
+      updatedCount,
+      safetyBackup: safetyFilename,
+      durationMs,
+      message: `Restored ${mode === 'replace' ? insertedCount : (insertedCount + updatedCount)} records (${parsed.type.toUpperCase()}). Pre-restore safety snapshot: ${safetyFilename}`
+    };
+  }
+
+  // 10. Restore from Historical Archive File on Server
+  async restoreBackup(filename, options = {}) {
+    const safeFilename = path.basename(filename);
+    const filePath = path.join(this.backupsDir, safeFilename);
+
+    if (!fs.existsSync(filePath)) {
+      throw new Error(`Backup archive "${safeFilename}" was not found in the backups directory.`);
+    }
+
+    const fileBuffer = fs.readFileSync(filePath);
+    return this.restoreFromBuffer(fileBuffer, safeFilename, options);
   }
 }
 

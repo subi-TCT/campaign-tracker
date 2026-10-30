@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Database,
   Download,
@@ -11,18 +11,30 @@ import {
   Send,
   CheckCircle,
   AlertCircle,
+  AlertTriangle,
   Clock,
   Archive,
-  Layers,
+  RotateCcw,
+  Upload,
   Sparkles
 } from 'lucide-react';
 
-export default function BackupManagementModal({ isOpen, onClose, authToken, API_BASE }) {
+export default function BackupManagementModal({ isOpen, onClose, authToken, API_BASE, onRestoreSuccess }) {
   const [backups, setBackups] = useState([]);
   const [status, setStatus] = useState(null);
   const [loading, setLoading] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [restoring, setRestoring] = useState(false);
   const [actionMsg, setActionMsg] = useState({ type: '', text: '' });
+  const [confirmModal, setConfirmModal] = useState({
+    isOpen: false,
+    filename: '',
+    isUpload: false,
+    fileBase64: null,
+    mode: 'replace',
+    confirmText: ''
+  });
+  const fileInputRef = useRef(null);
 
   useEffect(() => {
     if (isOpen) {
@@ -128,6 +140,93 @@ export default function BackupManagementModal({ isOpen, onClose, authToken, API_
       }
     } catch (err) {
       setActionMsg({ type: 'error', text: err.message || 'Error deleting backup.' });
+    }
+  };
+
+  const handleFileSelect = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (uploadEvent) => {
+      setConfirmModal({
+        isOpen: true,
+        filename: file.name,
+        isUpload: true,
+        fileBase64: uploadEvent.target.result,
+        mode: 'replace',
+        confirmText: ''
+      });
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleOpenRestoreConfirm = (filename) => {
+    setConfirmModal({
+      isOpen: true,
+      filename,
+      isUpload: false,
+      fileBase64: null,
+      mode: 'replace',
+      confirmText: ''
+    });
+  };
+
+  const handleExecuteRestore = async () => {
+    if (confirmModal.confirmText.trim().toUpperCase() !== 'RESTORE') {
+      alert('Please type RESTORE to confirm this database operation.');
+      return;
+    }
+
+    setRestoring(true);
+    setActionMsg({ type: '', text: '' });
+    try {
+      let res;
+      if (confirmModal.isUpload) {
+        res = await fetch(`${API_BASE}/backup/upload-restore`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${authToken}`
+          },
+          body: JSON.stringify({
+            filename: confirmModal.filename,
+            fileBase64: confirmModal.fileBase64,
+            mode: confirmModal.mode
+          })
+        });
+      } else {
+        res = await fetch(`${API_BASE}/backup/restore/${encodeURIComponent(confirmModal.filename)}`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${authToken}`
+          },
+          body: JSON.stringify({
+            mode: confirmModal.mode
+          })
+        });
+      }
+
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setActionMsg({
+          type: 'success',
+          text: `🎉 ${data.message || 'Database restored successfully!'}`
+        });
+        setConfirmModal({ isOpen: false, filename: '', isUpload: false, fileBase64: null, mode: 'replace', confirmText: '' });
+        await fetchData();
+        if (onRestoreSuccess) onRestoreSuccess();
+      } else {
+        setActionMsg({
+          type: 'error',
+          text: data.error || 'Failed to restore backup snapshot.'
+        });
+      }
+    } catch (err) {
+      setActionMsg({ type: 'error', text: err.message || 'Network error executing restore.' });
+    } finally {
+      setRestoring(false);
     }
   };
 
@@ -341,22 +440,51 @@ export default function BackupManagementModal({ isOpen, onClose, authToken, API_
               </div>
             </div>
 
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
               <button
                 type="button"
                 className="btn"
                 onClick={fetchData}
-                disabled={loading || creating}
+                disabled={loading || creating || restoring}
                 style={{ padding: '6px 12px', fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 5 }}
               >
                 <RefreshCw size={13} className={loading ? 'spinning' : ''} /> Refresh
+              </button>
+
+              <input
+                type="file"
+                ref={fileInputRef}
+                accept=".gz,.sqlite,.xlsx,.json"
+                onChange={handleFileSelect}
+                style={{ display: 'none' }}
+              />
+
+              <button
+                type="button"
+                className="btn"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={creating || restoring}
+                style={{
+                  padding: '7px 14px',
+                  fontSize: 12,
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  fontWeight: 600,
+                  background: 'rgba(245, 158, 11, 0.15)',
+                  color: '#fbbf24',
+                  border: '1px solid rgba(245, 158, 11, 0.3)'
+                }}
+                title="Upload an external .sqlite.gz or .xlsx backup to restore"
+              >
+                <Upload size={14} /> Upload & Restore
               </button>
 
               <button
                 type="button"
                 className="btn btn-primary"
                 onClick={handleCreateBackup}
-                disabled={creating}
+                disabled={creating || restoring}
                 style={{
                   padding: '7px 16px',
                   fontSize: 12,
@@ -476,6 +604,25 @@ export default function BackupManagementModal({ isOpen, onClose, authToken, API_
                               <button
                                 type="button"
                                 className="btn"
+                                onClick={() => handleOpenRestoreConfirm(b.filename)}
+                                title={`Restore database from ${b.filename}`}
+                                disabled={creating || restoring}
+                                style={{
+                                  padding: '4px 8px',
+                                  fontSize: 11,
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: 4,
+                                  background: 'rgba(245, 158, 11, 0.15)',
+                                  color: '#fbbf24',
+                                  border: '1px solid rgba(245, 158, 11, 0.3)'
+                                }}
+                              >
+                                <RotateCcw size={12} /> Restore
+                              </button>
+                              <button
+                                type="button"
+                                className="btn"
                                 onClick={() => handleDownload(b.filename)}
                                 title={`Download ${b.filename}`}
                                 style={{
@@ -520,6 +667,194 @@ export default function BackupManagementModal({ isOpen, onClose, authToken, API_
             )}
           </div>
         </div>
+
+        {/* Restore Confirmation Modal Overlay */}
+        {confirmModal.isOpen && (
+          <div
+            style={{
+              position: 'fixed',
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              background: 'rgba(0, 0, 0, 0.75)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              zIndex: 10000,
+              padding: 16
+            }}
+            onClick={() => !restoring && setConfirmModal(prev => ({ ...prev, isOpen: false }))}
+          >
+            <div
+              style={{
+                background: '#111420',
+                border: '1px solid rgba(245, 158, 11, 0.35)',
+                borderRadius: 14,
+                maxWidth: 520,
+                width: '100%',
+                padding: '24px',
+                boxShadow: '0 20px 40px rgba(0,0,0,0.6)',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 16
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <div style={{ background: 'rgba(245, 158, 11, 0.15)', padding: 10, borderRadius: 10, color: '#fbbf24', display: 'flex' }}>
+                  <AlertTriangle size={24} />
+                </div>
+                <div>
+                  <h3 style={{ margin: 0, fontSize: 17, color: 'var(--color-text-white)' }}>
+                    Confirm Database Restoration
+                  </h3>
+                  <p style={{ margin: 0, fontSize: 12, color: 'var(--color-text-muted)' }}>
+                    Restore member database from snapshot archive
+                  </p>
+                </div>
+              </div>
+
+              <div style={{ background: 'rgba(255, 255, 255, 0.03)', border: '1px solid var(--border-color)', borderRadius: 8, padding: 12, fontSize: 12 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                  <span style={{ color: 'var(--color-text-secondary)' }}>Target Snapshot:</span>
+                  <span style={{ fontWeight: 700, color: '#38bdf8', wordBreak: 'break-all' }}>{confirmModal.filename}</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span style={{ color: 'var(--color-text-secondary)' }}>Safety Net:</span>
+                  <span style={{ color: '#34d399', fontWeight: 600 }}>✓ Auto pre-restore snapshot created first</span>
+                </div>
+              </div>
+
+              {/* Restore Mode Radio Options */}
+              <div>
+                <label style={{ display: 'block', fontSize: 12, fontWeight: 700, color: 'var(--color-text-white)', marginBottom: 8 }}>
+                  Select Restoration Strategy:
+                </label>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  <label
+                    style={{
+                      display: 'flex',
+                      alignItems: 'flex-start',
+                      gap: 10,
+                      padding: '10px 12px',
+                      borderRadius: 8,
+                      background: confirmModal.mode === 'replace' ? 'rgba(245, 158, 11, 0.1)' : 'rgba(255, 255, 255, 0.02)',
+                      border: `1px solid ${confirmModal.mode === 'replace' ? 'rgba(245, 158, 11, 0.4)' : 'var(--border-color)'}`,
+                      cursor: 'pointer'
+                    }}
+                  >
+                    <input
+                      type="radio"
+                      name="restoreMode"
+                      checked={confirmModal.mode === 'replace'}
+                      onChange={() => setConfirmModal(p => ({ ...p, mode: 'replace' }))}
+                      style={{ marginTop: 2 }}
+                    />
+                    <div>
+                      <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--color-text-white)' }}>
+                        Full Wipe & Replace (Recommended)
+                      </div>
+                      <div style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>
+                        Sets the database to the exact state of this backup archive.
+                      </div>
+                    </div>
+                  </label>
+
+                  <label
+                    style={{
+                      display: 'flex',
+                      alignItems: 'flex-start',
+                      gap: 10,
+                      padding: '10px 12px',
+                      borderRadius: 8,
+                      background: confirmModal.mode === 'merge' ? 'rgba(99, 102, 241, 0.1)' : 'rgba(255, 255, 255, 0.02)',
+                      border: `1px solid ${confirmModal.mode === 'merge' ? 'rgba(99, 102, 241, 0.4)' : 'var(--border-color)'}`,
+                      cursor: 'pointer'
+                    }}
+                  >
+                    <input
+                      type="radio"
+                      name="restoreMode"
+                      checked={confirmModal.mode === 'merge'}
+                      onChange={() => setConfirmModal(p => ({ ...p, mode: 'merge' }))}
+                      style={{ marginTop: 2 }}
+                    />
+                    <div>
+                      <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--color-text-white)' }}>
+                        Smart Merge / Upsert
+                      </div>
+                      <div style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>
+                        Updates existing contacts and adds missing ones, preserving newer records.
+                      </div>
+                    </div>
+                  </label>
+                </div>
+              </div>
+
+              {/* Confirmation text input */}
+              <div>
+                <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--color-text-white)', marginBottom: 6 }}>
+                  Type <span style={{ color: '#fbbf24', fontWeight: 800 }}>RESTORE</span> to authorize:
+                </label>
+                <input
+                  type="text"
+                  className="drawer-input"
+                  placeholder="RESTORE"
+                  value={confirmModal.confirmText}
+                  onChange={(e) => setConfirmModal(p => ({ ...p, confirmText: e.target.value }))}
+                  style={{ width: '100%', fontSize: 13, textTransform: 'uppercase', letterSpacing: 1 }}
+                  disabled={restoring}
+                  autoFocus
+                />
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 4 }}>
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={() => setConfirmModal(prev => ({ ...prev, isOpen: false }))}
+                  disabled={restoring}
+                  style={{ padding: '7px 16px', fontSize: 12 }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={handleExecuteRestore}
+                  disabled={restoring || confirmModal.confirmText.trim().toUpperCase() !== 'RESTORE'}
+                  style={{
+                    padding: '7px 18px',
+                    fontSize: 12,
+                    fontWeight: 700,
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    background: confirmModal.confirmText.trim().toUpperCase() === 'RESTORE'
+                      ? 'linear-gradient(135deg, #d97706 0%, #b45309 100%)'
+                      : 'rgba(255, 255, 255, 0.05)',
+                    color: confirmModal.confirmText.trim().toUpperCase() === 'RESTORE' ? '#fff' : 'var(--color-text-muted)',
+                    border: 'none',
+                    cursor: confirmModal.confirmText.trim().toUpperCase() === 'RESTORE' ? 'pointer' : 'not-allowed'
+                  }}
+                >
+                  {restoring ? (
+                    <>
+                      <RefreshCw size={13} className="spinning" />
+                      Restoring Database...
+                    </>
+                  ) : (
+                    <>
+                      <RotateCcw size={13} />
+                      Confirm & Execute Restore
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Modal Footer */}
         <div

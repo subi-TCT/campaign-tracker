@@ -174,9 +174,10 @@ export default function App() {
 
   const CAMPAIGN_TABS = useMemo(() => [
     'dashboard', 'excelDashboard', 'exitpoll', 'candidates',
-    'call', 'whatsapp', 'email', 'sms', 'volunteers'
+    'database', 'call', 'whatsapp', 'email', 'sms', 'volunteers'
   ], []);
   const isCampaignTab = CAMPAIGN_TABS.includes(activeTab);
+  const isCommunityView = ['communityDirectory', 'birthdays', 'bloodbank'].includes(activeTab);
   
   // Searching & Pagination
   const [searchQuery, setSearchQuery] = useState('');
@@ -2434,7 +2435,7 @@ export default function App() {
     let list = [...contacts];
 
     // Filter by Active Status depending on current view
-    if (activeTab === 'database') {
+    if (activeTab === 'database' || activeTab === 'communityDirectory') {
       if (statusFilter === 'Active') {
         list = list.filter(c => c.account_status !== 'Inactive');
       } else if (statusFilter === 'Inactive') {
@@ -2504,18 +2505,18 @@ export default function App() {
       }
     }
 
-    // Global Sentiment Filter
-    if (sentimentFilter !== 'All') {
+    // Global Sentiment Filter (ignored in Community Member Directory)
+    if (activeTab !== 'communityDirectory' && sentimentFilter !== 'All') {
       list = list.filter(c => c.member_reaction === sentimentFilter);
     }
 
-    // District Filter (Master Database tab only)
-    if (activeTab === 'database' && districtFilter !== 'All') {
+    // District Filter (Master Database & Community Directory tabs)
+    if ((activeTab === 'database' || activeTab === 'communityDirectory') && districtFilter !== 'All') {
       list = list.filter(c => c.district === districtFilter);
     }
 
-    // Blood Group Filter (Master Database tab only)
-    if (activeTab === 'database' && bloodGroupFilter !== 'All') {
+    // Blood Group Filter (Master Database & Community Directory tabs)
+    if ((activeTab === 'database' || activeTab === 'communityDirectory') && bloodGroupFilter !== 'All') {
       list = list.filter(c => (c.blood_group || 'Unknown') === bloodGroupFilter);
     }
 
@@ -2858,12 +2859,12 @@ export default function App() {
 
             <li className="nav-item">
               <button 
-                className={`nav-link ${activeTab === 'database' ? 'active' : ''}`} 
-                onClick={() => selectTab('database', true)}
-                title="Directory Services & Master Contact Database"
+                className={`nav-link ${activeTab === 'communityDirectory' ? 'active' : ''}`} 
+                onClick={() => selectTab('communityDirectory', true)}
+                title="Member Directory & Profile Management"
               >
                 <FileText size={18} color="#3b82f6" />
-                <span>Directory Services</span>
+                <span>Member Directory</span>
               </button>
             </li>
 
@@ -2913,6 +2914,12 @@ export default function App() {
                     <button className={`nav-sub-link ${activeTab === 'candidates' ? 'active' : ''}`} onClick={() => selectTab('candidates')}>
                       <Award size={14} />
                       <span>Panel Candidates</span>
+                    </button>
+                  </li>
+                  <li className="nav-sub-item">
+                    <button className={`nav-sub-link ${activeTab === 'database' ? 'active' : ''}`} onClick={() => selectTab('database', true)}>
+                      <Database size={14} />
+                      <span>Voter Master Database</span>
                     </button>
                   </li>
                   <li className="nav-sub-item">
@@ -3015,7 +3022,7 @@ export default function App() {
               <div className="community-badge-icon">
                 {activeTab === 'birthdays' && <Cake size={22} color="#ec4899" />}
                 {activeTab === 'bloodbank' && <Droplet size={22} color="#ef4444" />}
-                {activeTab === 'database' && <FileText size={22} color="#3b82f6" />}
+                {activeTab === 'communityDirectory' && <FileText size={22} color="#3b82f6" />}
                 {activeTab === 'quality' && <AlertTriangle size={22} color="#f59e0b" />}
                 {activeTab === 'templates' && <Settings size={22} color="#a855f7" />}
               </div>
@@ -3023,7 +3030,7 @@ export default function App() {
                 <h2>
                   {activeTab === 'birthdays' && "Greeting Service & Celebrations Hub"}
                   {activeTab === 'bloodbank' && "Emergency Blood Bank & Donor Directory"}
-                  {activeTab === 'database' && "Member Directory & Database Services"}
+                  {activeTab === 'communityDirectory' && "Member Directory & Profile Management"}
                   {activeTab === 'quality' && "Data Integrity & Contact Audit"}
                   {activeTab === 'templates' && "Message & Communication Templates"}
                 </h2>
@@ -3052,7 +3059,7 @@ export default function App() {
 
               <div 
                 className="quick-stat-pill" 
-                onClick={() => selectTab('database', true)}
+                onClick={() => selectTab('communityDirectory', true)}
                 title="View directory member records"
               >
                 <Users size={15} color="#3b82f6" />
@@ -3083,6 +3090,9 @@ export default function App() {
               </button>
               <button className={`subnav-pill ${activeTab === 'candidates' ? 'active' : ''}`} onClick={() => selectTab('candidates')}>
                 Panel Candidates
+              </button>
+              <button className={`subnav-pill ${activeTab === 'database' ? 'active' : ''}`} onClick={() => selectTab('database')}>
+                Voter Master DB
               </button>
               <button className={`subnav-pill ${activeTab === 'call' ? 'active' : ''}`} onClick={() => selectTab('call')}>
                 Call Center
@@ -5189,11 +5199,216 @@ export default function App() {
             </div>
           )}
 
-          {/* ==================== MASTER DATABASE TAB ==================== */}
+          {/* ==================== COMMUNITY MEMBER DIRECTORY TAB ==================== */}
+          {activeTab === 'communityDirectory' && (
+            <div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
+                <h2 className="tab-title">IAS Member Directory</h2>
+                <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                  <button className="btn success" onClick={() => setShowAddModal(true)}>
+                    <Plus size={16} /> Add Member
+                  </button>
+                  <button 
+                    className="btn" 
+                    onClick={() => { setShowPhotoModal(true); setSyncPhotoResult(null); }}
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: 8, background: 'rgba(99, 102, 241, 0.15)', borderColor: '#6366f1', color: '#a5b4fc' }}
+                  >
+                    <ImageIcon size={16} /> Member Photos
+                  </button>
+                  {isAdmin && (
+                    <button 
+                      className="btn primary" 
+                      onClick={() => { setShowMasterImportModal(true); setMasterImportAnalysis(null); setMasterImportError(''); }}
+                      style={{ display: 'inline-flex', alignItems: 'center', gap: 8, background: '#6366f1', borderColor: '#6366f1' }}
+                    >
+                      <Upload size={16} /> Bulk Import / Update
+                    </button>
+                  )}
+                  <button className="btn" onClick={handleExportCSV}>
+                    <FileText size={16} /> Export Member CSV
+                  </button>
+                </div>
+              </div>
+
+              {/* Search and Filters controls */}
+              <div className="controls-bar">
+                <div className="search-wrapper">
+                  <Search size={18} className="search-icon" />
+                  <input 
+                    type="text" 
+                    placeholder="Search by Name, S.No, Account Code, Phone, or Email ID..." 
+                    className="search-input"
+                    value={searchQuery}
+                    onChange={(e) => { setSearchQuery(e.target.value); setCurrentPage(1); }}
+                  />
+                </div>
+                <div className="filters-wrapper">
+                  {selectedContactIds.length > 0 && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'rgba(59, 130, 246, 0.1)', border: '1px solid rgba(59, 130, 246, 0.3)', padding: '4px 10px', borderRadius: 6 }}>
+                      <span style={{ fontSize: 12, color: 'var(--color-text-white)', fontWeight: 600 }}>
+                        {selectedContactIds.length} Selected
+                      </span>
+                      <button 
+                        className="btn" 
+                        onClick={() => setSelectedContactIds([])} 
+                        style={{ padding: '2px 6px', fontSize: 11, height: 'auto' }}
+                      >
+                        Clear
+                      </button>
+                    </div>
+                  )}
+                  <select 
+                    className="filter-select" 
+                    value={statusFilter} 
+                    onChange={(e) => { setStatusFilter(e.target.value); setCurrentPage(1); }}
+                  >
+                    <option value="Active">Active Members Only</option>
+                    <option value="Inactive">Inactive Members Only</option>
+                    <option value="All">All Statuses</option>
+                  </select>
+                  <select 
+                    className="filter-select" 
+                    value={districtFilter} 
+                    onChange={(e) => { setDistrictFilter(e.target.value); setCurrentPage(1); }}
+                  >
+                    <option value="All">All Districts</option>
+                    {uniqueDistricts.map(dist => (
+                      <option key={dist} value={dist}>{dist}</option>
+                    ))}
+                  </select>
+                  <select 
+                    className="filter-select" 
+                    value={bloodGroupFilter} 
+                    onChange={(e) => { setBloodGroupFilter(e.target.value); setCurrentPage(1); }}
+                  >
+                    <option value="All">All Blood Groups</option>
+                    <option value="O+">O+ (Common)</option>
+                    <option value="A+">A+</option>
+                    <option value="B+">B+</option>
+                    <option value="AB+">AB+</option>
+                    <option value="O-">O- (Universal Donor)</option>
+                    <option value="A-">A- (Rare)</option>
+                    <option value="B-">B- (Rare)</option>
+                    <option value="AB-">AB- (Rare)</option>
+                    <option value="Unknown">Unknown / Unregistered</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Simplified Member Table */}
+              <div className="table-wrapper">
+                <table className="contacts-table">
+                  <thead>
+                    <tr>
+                      <th style={{ width: 40 }}>
+                        <input 
+                          type="checkbox" 
+                          onChange={toggleSelectAll} 
+                          checked={paginatedContacts.length > 0 && paginatedContacts.every(c => selectedContactIds.includes(c.id))} 
+                        />
+                      </th>
+                      <th>S.No</th>
+                      <th>Code</th>
+                      <th>Member Profile</th>
+                      <th>Blood Group</th>
+                      <th>DOB</th>
+                      <th>DOJ</th>
+                      <th>District</th>
+                      <th>Area</th>
+                      <th>Mobile Number</th>
+                      <th>Email ID</th>
+                      <th style={{ textAlign: 'right' }}>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {paginatedContacts.length > 0 ? (
+                      paginatedContacts.map((contact) => (
+                        <tr key={contact.id}>
+                          <td>
+                            <input 
+                              type="checkbox" 
+                              checked={selectedContactIds.includes(contact.id)} 
+                              onChange={() => toggleContactSelect(contact.id)} 
+                            />
+                          </td>
+                          <td>{contact.s_no}</td>
+                          <td><span style={{ fontWeight: 700, color: '#a855f7' }}>{contact.acc_code}</span></td>
+                          <td>
+                            <div className="avatar-cell">
+                              {contact.photo_filename ? (
+                                <img 
+                                  src={`${PHOTO_BASE}/${encodeURIComponent(contact.photo_filename)}`}
+                                  alt={contact.account_name}
+                                  className="member-avatar-img"
+                                  onError={(e) => { e.target.style.display = 'none'; if (e.target.nextSibling) e.target.nextSibling.style.display = 'flex'; }}
+                                />
+                              ) : null}
+                              <div 
+                                className="member-avatar-fallback"
+                                style={{ display: contact.photo_filename ? 'none' : 'flex' }}
+                              >
+                                {contact.account_name.substring(0, 2)}
+                              </div>
+                              <div>
+                                <div style={{ fontWeight: 600, color: 'var(--color-text-white)' }}>
+                                  {contact.account_name}
+                                  {contact.account_status === 'Inactive' && (
+                                    <span className="status-badge failed" style={{ marginLeft: 8, fontSize: 10, padding: '2px 6px', textTransform: 'uppercase' }}>Inactive</span>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          </td>
+                          <td>
+                            {contact.blood_group && contact.blood_group !== 'Unknown' ? (
+                              <span className={`badge-blood ${contact.blood_group.includes('-') ? 'neg' : 'pos'}`}>
+                                <Droplet size={11} /> {contact.blood_group}
+                              </span>
+                            ) : (
+                              <span className="badge-blood unknown">Unknown</span>
+                            )}
+                          </td>
+                          <td style={{ fontSize: 12, whiteSpace: 'nowrap' }}>{contact.date_of_birth || '—'}</td>
+                          <td style={{ fontSize: 12, whiteSpace: 'nowrap' }}>{contact.date_of_join || '—'}</td>
+                          <td>{contact.district || '—'}</td>
+                          <td>{contact.area || '—'}</td>
+                          <td>{contact.mobile_number}</td>
+                          <td>{contact.email_id || <span style={{ color: '#ef4444', fontStyle: 'italic' }}>None</span>}</td>
+                          <td style={{ textAlign: 'right' }}>
+                            <button 
+                              className="action-btn" 
+                              title="View / Edit Member Profile"
+                              onClick={() => handleOpenDrawer(contact)}
+                            >
+                              <Edit2 size={16} />
+                            </button>
+                          </td>
+                        </tr>
+                      ))
+                    ) : (
+                      <tr>
+                        <td colSpan="12" style={{ textAlign: 'center', padding: 32, color: 'var(--color-text-muted)' }}>No members found matching selection.</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+                <div className="pagination">
+                  <span>Showing {totalItems > 0 ? startIndex + 1 : 0} to {Math.min(startIndex + itemsPerPage, totalItems)} of {totalItems} members</span>
+                  <div className="pagination-buttons">
+                    <button className="btn" onClick={() => handlePageChange(currentPage - 1)} disabled={currentPage === 1}><ChevronLeft size={16} /></button>
+                    <span style={{ display: 'flex', alignItems: 'center', padding: '0 8px', color: 'var(--color-text-primary)' }}>Page {currentPage} of {totalPages || 1}</span>
+                    <button className="btn" onClick={() => handlePageChange(currentPage + 1)} disabled={currentPage === totalPages || totalPages === 0}><ChevronRight size={16} /></button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ==================== VOTER MASTER DATABASE (CAMPAIGN ARCHIVE) ==================== */}
           {activeTab === 'database' && (
             <div>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
-                <h2 className="tab-title">Master Contacts Database</h2>
+                <h2 className="tab-title">Voter Master Database & Campaign Records</h2>
                 <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
                   {isAdmin && (
                     <button 
@@ -6485,7 +6700,7 @@ export default function App() {
         <div className="drawer-backdrop" onClick={() => setIsDrawerOpen(false)}>
           <div className="drawer" onClick={(e) => e.stopPropagation()}>
             <div className="drawer-header">
-              <h3 className="drawer-title">Member Profile & Outreach Logs</h3>
+              <h3 className="drawer-title">{isCommunityView ? 'Member Profile' : 'Member Profile & Outreach Logs'}</h3>
               <button className="close-btn" onClick={() => setIsDrawerOpen(false)}>×</button>
             </div>
 
@@ -6686,7 +6901,7 @@ export default function App() {
                   />
                 </div>
               </div>
-              <div className="grid-2">
+              <div className={isCommunityView ? "drawer-field" : "grid-2"}>
                 <div className="drawer-field">
                   <span className="drawer-label">Account Status</span>
                   <select 
@@ -6694,167 +6909,173 @@ export default function App() {
                     value={selectedContact.account_status || 'Active'}
                     onChange={(e) => setSelectedContact(prev => ({ ...prev, account_status: e.target.value }))}
                   >
-                    <option value="Active">Active (Included in campaigns)</option>
-                    <option value="Inactive">Inactive (Excluded from lists & stats)</option>
+                    <option value="Active">Active {isCommunityView ? '' : '(Included in campaigns)'}</option>
+                    <option value="Inactive">Inactive {isCommunityView ? '' : '(Excluded from lists & stats)'}</option>
                   </select>
                 </div>
-                <div className="drawer-field">
-                  <span className="drawer-label">Assigned Volunteer</span>
-                  <select 
-                    className="drawer-input"
-                    value={selectedContact.assigned_to || 'Unassigned'}
-                    onChange={(e) => setSelectedContact(prev => ({ ...prev, assigned_to: e.target.value }))}
-                  >
-                    <option value="Unassigned">Unassigned</option>
-                    {volunteers.map(name => (
-                      <option key={name} value={name}>{name}</option>
-                    ))}
-                  </select>
-                </div>
+                {!isCommunityView && (
+                  <div className="drawer-field">
+                    <span className="drawer-label">Assigned Volunteer</span>
+                    <select 
+                      className="drawer-input"
+                      value={selectedContact.assigned_to || 'Unassigned'}
+                      onChange={(e) => setSelectedContact(prev => ({ ...prev, assigned_to: e.target.value }))}
+                    >
+                      <option value="Unassigned">Unassigned</option>
+                      {volunteers.map(name => (
+                        <option key={name} value={name}>{name}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
               </div>
             </div>
 
-            <div className="drawer-section">
-              <h4 className="drawer-section-title">Voter Sentiment (Outreach Response)</h4>
-              <div className="drawer-field">
-                <span className="drawer-label">Current Sentiment Feedback</span>
-                <select 
-                  className="drawer-input"
-                  value={selectedContact.member_reaction || 'Unknown'}
-                  onChange={(e) => setSelectedContact(prev => ({ ...prev, member_reaction: e.target.value }))}
-                >
-                  <option value="Unknown">Unknown / Uncontacted</option>
-                  <option value="Strong Support (Panel)">🟢 Strong Support (Panel)</option>
-                  <option value="Leaning Support (Anil Kumar only)">🟡 Leaning Support (Anil Kumar only)</option>
-                  <option value="Undecided / Needs Follow-up">🟠 Undecided / Needs Follow-up</option>
-                  <option value="Opposed">🔴 Opposed</option>
-                </select>
-              </div>
-            </div>
-
-            <div className="drawer-section">
-              <h4 className="drawer-section-title">Call Center Logs</h4>
-              
-              <div className="drawer-field">
-                <span className="drawer-label">Call Status Outcome</span>
-                <select 
-                  className="drawer-input" 
-                  value={selectedContact.call_status}
-                  onChange={(e) => setSelectedContact(prev => ({ 
-                    ...prev, 
-                    call_status: e.target.value,
-                    call_sent_date: e.target.value !== 'Not Called' ? getTodayString() : '' 
-                  }))}
-                >
-                  <option value="Not Called">Not Called</option>
-                  <option value="Connected">Connected (Confirms Support)</option>
-                  <option value="Busy">Busy (Call back later)</option>
-                  <option value="No Answer">No Answer</option>
-                  <option value="No Response">No Response</option>
-                  <option value="Out of country">Out of country</option>
-                  <option value="Switched off">Switched off</option>
-                  <option value="Reminder Request">Reminder Request</option>
-                  <option value="Left Message">Left Message</option>
-                  <option value="Failed">Failed / Declined</option>
-                </select>
-              </div>
-
-              {selectedContact.call_status !== 'Not Called' && (
-                <div className="drawer-field">
-                  <span className="drawer-label">Call Date</span>
-                  <span className="drawer-value">{selectedContact.call_sent_date || getTodayString()}</span>
-                </div>
-              )}
-
-              <div className="drawer-field">
-                <span className="drawer-label">Call Discussion / Notes</span>
-                <textarea 
-                  className="drawer-textarea" 
-                  placeholder="Enter comments on support, response, or scheduling..." 
-                  value={selectedContact.notes || ''}
-                  onChange={(e) => setSelectedContact(prev => ({ ...prev, notes: e.target.value }))}
-                />
-              </div>
-            </div>
-
-            <div className="drawer-section">
-              <h4 className="drawer-section-title">Campaign Channel Statuses</h4>
-              <div className="grid-2">
-                <div className="drawer-field">
-                  <span className="drawer-label">Email Campaign</span>
-                  <select 
-                    className="drawer-input"
-                    value={selectedContact.email_status}
-                    onChange={(e) => setSelectedContact(prev => ({ 
-                      ...prev, 
-                      email_status: e.target.value,
-                      email_sent_date: e.target.value === 'Sent' ? getTodayString() : '' 
-                    }))}
-                  >
-                    <option value="Pending">Pending</option>
-                    <option value="Sent">Sent</option>
-                    <option value="Undelivered">Undelivered / Bounced</option>
-                  </select>
-                </div>
-                
-                <div className="drawer-field">
-                  <span className="drawer-label">WhatsApp Campaign</span>
-                  <select 
-                    className="drawer-input"
-                    value={selectedContact.whatsapp_status}
-                    onChange={(e) => setSelectedContact(prev => ({ 
-                      ...prev, 
-                      whatsapp_status: e.target.value,
-                      whatsapp_sent_date: e.target.value === 'Sent' || e.target.value === 'Delivered' ? getTodayString() : '' 
-                    }))}
-                  >
-                    <option value="Pending">Pending</option>
-                    <option value="Sent">Sent</option>
-                    <option value="Delivered">Delivered</option>
-                    <option value="Failed">Failed</option>
-                  </select>
+            {!isCommunityView && (
+              <>
+                <div className="drawer-section">
+                  <h4 className="drawer-section-title">Voter Sentiment (Outreach Response)</h4>
+                  <div className="drawer-field">
+                    <span className="drawer-label">Current Sentiment Feedback</span>
+                    <select 
+                      className="drawer-input"
+                      value={selectedContact.member_reaction || 'Unknown'}
+                      onChange={(e) => setSelectedContact(prev => ({ ...prev, member_reaction: e.target.value }))}
+                    >
+                      <option value="Unknown">Unknown / Uncontacted</option>
+                      <option value="Strong Support (Panel)">🟢 Strong Support (Panel)</option>
+                      <option value="Leaning Support (Anil Kumar only)">🟡 Leaning Support (Anil Kumar only)</option>
+                      <option value="Undecided / Needs Follow-up">🟠 Undecided / Needs Follow-up</option>
+                      <option value="Opposed">🔴 Opposed</option>
+                    </select>
+                  </div>
                 </div>
 
-                <div className="drawer-field" style={{ gridColumn: 'span 2' }}>
-                  <span className="drawer-label">SMS Campaign (Textbee)</span>
-                  <select 
-                    className="drawer-input"
-                    value={selectedContact.sms_status || 'Pending'}
-                    onChange={(e) => setSelectedContact(prev => ({ 
-                      ...prev, 
-                      sms_status: e.target.value,
-                      sms_sent_date: e.target.value === 'Sent' ? getTodayString() : '' 
-                    }))}
-                  >
-                    <option value="Pending">Pending</option>
-                    <option value="Sent">Sent</option>
-                    <option value="Failed">Failed</option>
-                  </select>
-                </div>
-              </div>
-            </div>
+                <div className="drawer-section">
+                  <h4 className="drawer-section-title">Call Center Logs</h4>
+                  
+                  <div className="drawer-field">
+                    <span className="drawer-label">Call Status Outcome</span>
+                    <select 
+                      className="drawer-input" 
+                      value={selectedContact.call_status}
+                      onChange={(e) => setSelectedContact(prev => ({ 
+                        ...prev, 
+                        call_status: e.target.value,
+                        call_sent_date: e.target.value !== 'Not Called' ? getTodayString() : '' 
+                      }))}
+                    >
+                      <option value="Not Called">Not Called</option>
+                      <option value="Connected">Connected (Confirms Support)</option>
+                      <option value="Busy">Busy (Call back later)</option>
+                      <option value="No Answer">No Answer</option>
+                      <option value="No Response">No Response</option>
+                      <option value="Out of country">Out of country</option>
+                      <option value="Switched off">Switched off</option>
+                      <option value="Reminder Request">Reminder Request</option>
+                      <option value="Left Message">Left Message</option>
+                      <option value="Failed">Failed / Declined</option>
+                    </select>
+                  </div>
 
-            {/* Exit Poll on-the-fly override */}
-            <div className="drawer-section">
-              <h4 className="drawer-section-title">Election Day Exit Poll</h4>
-              <div className="drawer-field">
-                <span className="drawer-label">Voting Feedback Status</span>
-                <select 
-                  className="drawer-input"
-                  value={selectedContact.exit_poll_status || 'Pending'}
-                  onChange={(e) => setSelectedContact(prev => ({ ...prev, exit_poll_status: e.target.value }))}
-                >
-                  <option value="Pending">Pending / Unknown</option>
-                  <option value="Secured">Secured (Voted Panel)</option>
-                  <option value="Lost">Lost (Voted Opposition)</option>
-                  <option value="Voted-Unknown">Voted but Secretive</option>
-                </select>
-              </div>
-            </div>
+                  {selectedContact.call_status !== 'Not Called' && (
+                    <div className="drawer-field">
+                      <span className="drawer-label">Call Date</span>
+                      <span className="drawer-value">{selectedContact.call_sent_date || getTodayString()}</span>
+                    </div>
+                  )}
+
+                  <div className="drawer-field">
+                    <span className="drawer-label">Call Discussion / Notes</span>
+                    <textarea 
+                      className="drawer-textarea" 
+                      placeholder="Enter comments on support, response, or scheduling..." 
+                      value={selectedContact.notes || ''}
+                      onChange={(e) => setSelectedContact(prev => ({ ...prev, notes: e.target.value }))}
+                    />
+                  </div>
+                </div>
+
+                <div className="drawer-section">
+                  <h4 className="drawer-section-title">Campaign Channel Statuses</h4>
+                  <div className="grid-2">
+                    <div className="drawer-field">
+                      <span className="drawer-label">Email Campaign</span>
+                      <select 
+                        className="drawer-input"
+                        value={selectedContact.email_status}
+                        onChange={(e) => setSelectedContact(prev => ({ 
+                          ...prev, 
+                          email_status: e.target.value,
+                          email_sent_date: e.target.value === 'Sent' ? getTodayString() : '' 
+                        }))}
+                      >
+                        <option value="Pending">Pending</option>
+                        <option value="Sent">Sent</option>
+                        <option value="Undelivered">Undelivered / Bounced</option>
+                      </select>
+                    </div>
+                    
+                    <div className="drawer-field">
+                      <span className="drawer-label">WhatsApp Campaign</span>
+                      <select 
+                        className="drawer-input"
+                        value={selectedContact.whatsapp_status}
+                        onChange={(e) => setSelectedContact(prev => ({ 
+                          ...prev, 
+                          whatsapp_status: e.target.value,
+                          whatsapp_sent_date: e.target.value === 'Sent' || e.target.value === 'Delivered' ? getTodayString() : '' 
+                        }))}
+                      >
+                        <option value="Pending">Pending</option>
+                        <option value="Sent">Sent</option>
+                        <option value="Delivered">Delivered</option>
+                        <option value="Failed">Failed</option>
+                      </select>
+                    </div>
+
+                    <div className="drawer-field" style={{ gridColumn: 'span 2' }}>
+                      <span className="drawer-label">SMS Campaign (Textbee)</span>
+                      <select 
+                        className="drawer-input"
+                        value={selectedContact.sms_status || 'Pending'}
+                        onChange={(e) => setSelectedContact(prev => ({ 
+                          ...prev, 
+                          sms_status: e.target.value,
+                          sms_sent_date: e.target.value === 'Sent' ? getTodayString() : '' 
+                        }))}
+                      >
+                        <option value="Pending">Pending</option>
+                        <option value="Sent">Sent</option>
+                        <option value="Failed">Failed</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Exit Poll on-the-fly override */}
+                <div className="drawer-section">
+                  <h4 className="drawer-section-title">Election Day Exit Poll</h4>
+                  <div className="drawer-field">
+                    <span className="drawer-label">Voting Feedback Status</span>
+                    <select 
+                      className="drawer-input"
+                      value={selectedContact.exit_poll_status || 'Pending'}
+                      onChange={(e) => setSelectedContact(prev => ({ ...prev, exit_poll_status: e.target.value }))}
+                    >
+                      <option value="Pending">Pending / Unknown</option>
+                      <option value="Secured">Secured (Voted Panel)</option>
+                      <option value="Lost">Lost (Voted Opposition)</option>
+                      <option value="Voted-Unknown">Voted but Secretive</option>
+                    </select>
+                  </div>
+                </div>
+              </>
+            )}
 
             <div style={{ marginTop: 'auto', display: 'flex', gap: 12 }}>
               <button className="btn primary" style={{ flexGrow: 1 }} onClick={handleSaveDrawerDetails}>
-                <Save size={16} /> Save Outreach Logs
+                <Save size={16} /> {isCommunityView ? 'Save Member Profile' : 'Save Outreach Logs'}
               </button>
               <button className="btn" onClick={() => setIsDrawerOpen(false)}>Cancel</button>
             </div>
@@ -8789,6 +9010,11 @@ export default function App() {
           onClose={() => setShowBackupModal(false)}
           authToken={authToken}
           API_BASE={API_BASE}
+          onRestoreSuccess={() => {
+            fetchData();
+            fetchBirthdays();
+            fetchBloodBank();
+          }}
         />
       )}
 

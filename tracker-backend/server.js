@@ -2918,6 +2918,7 @@ app.post('/api/email/settings', authenticateToken, requireAdmin, (req, res) => {
 const backupService = new BackupService({
   getDb: () => db,
   query,
+  run,
   getIsPostgres: () => isPostgres,
   dbPath,
   backupsDir: path.join(__dirname, 'backups'),
@@ -2983,6 +2984,36 @@ app.delete('/api/backup/:filename', authenticateToken, requireAdmin, (req, res) 
     res.json({ success: true, message: `Backup ${safeFilename} deleted successfully` });
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/backup/restore/:filename (Admin Only)
+app.post('/api/backup/restore/:filename', authenticateToken, requireAdmin, async (req, res) => {
+  const { filename } = req.params;
+  const { mode = 'replace' } = req.body;
+  try {
+    const result = await backupService.restoreBackup(filename, { mode });
+    res.json(result);
+  } catch (err) {
+    console.error('Backup restore failed:', err);
+    res.status(500).json({ error: err.message || 'Failed to restore backup' });
+  }
+});
+
+// POST /api/backup/upload-restore (Admin Only)
+app.post('/api/backup/upload-restore', authenticateToken, requireAdmin, async (req, res) => {
+  const { fileBase64, filename, mode = 'replace' } = req.body;
+  if (!fileBase64 || !filename) {
+    return res.status(400).json({ error: 'fileBase64 and filename are required' });
+  }
+  try {
+    const rawBase64 = fileBase64.replace(/^data:([A-Za-z0-9-+.\/]+);base64,/, '');
+    const buffer = Buffer.from(rawBase64, 'base64');
+    const result = await backupService.restoreFromBuffer(buffer, filename, { mode });
+    res.json(result);
+  } catch (err) {
+    console.error('Upload backup restore failed:', err);
+    res.status(500).json({ error: err.message || 'Failed to restore uploaded backup' });
   }
 });
 
